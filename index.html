@@ -97,7 +97,19 @@ input[type=text] { font: 14px var(--body); padding: 9px 10px; border: 1px solid 
 .err { color: var(--rec); font-size: 13px; margin: 0; }
 footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
 footer a { color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { button.rec.on .rec-dot { animation: none; } }
+.meter { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.mhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+select { font: 12px var(--mono); padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.mbar { position: relative; height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.mfill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width .1s linear; }
+.mfill.over { background: var(--warm); }
+.mtarget { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--ink); }
+.mscale { display: flex; justify-content: space-between; font-size: 10.5px; }
+.mnums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0; }
+.mnums div { display: grid; gap: 2px; min-width: 0; }
+.mnums dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; color: var(--muted); }
+.mnums dd { margin: 0; font-family: var(--mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { button.rec.on .rec-dot { animation: none; } .mfill { transition: none; } }
 </style>
 
 <div class="wrap">
@@ -142,6 +154,21 @@ footer a { color: var(--accent); }
       <section class="panel" aria-labelledby="h-gen">
         <h2 id="h-gen"><span class="step">Step 3</span> Soundscape</h2>
         <button id="start" class="primary big" type="button">START</button>
+        <div class="meter">
+          <div class="mhead"><span class="group-label">Loudness · LUFS</span>
+            <label class="readout" for="target">Target <select id="target"><option value="-23">−23 broadcast</option><option value="-16" selected>−16 streaming</option><option value="-14">−14 loud streaming</option></select></label></div>
+          <div class="mbar" aria-hidden="true"><div class="mfill" id="mFill"></div><div class="mtarget" id="mTarget"></div></div>
+          <div class="mscale readout" aria-hidden="true"><span>−40</span><span>−30</span><span>−20</span><span>−10</span><span>0</span></div>
+          <dl class="mnums">
+            <div><dt>MOMENT.</dt><dd id="lM">–</dd></div>
+            <div><dt>SHORT</dt><dd id="lS">–</dd></div>
+            <div><dt>INTEGR.</dt><dd id="lI">–</dd></div>
+            <div><dt>PEAK dB</dt><dd id="lP">–</dd></div>
+          </dl>
+          <p class="hint" id="lDiff">Start the soundscape to measure loudness.</p>
+          <label class="slider" for="sTrim">Output trim <input id="sTrim" type="range" min="-12" max="12" step="0.5" value="0"><output id="oTrim">+0.0 dB</output></label>
+          <div class="row"><button id="match" type="button" disabled>Match target</button><span class="readout">Limiter ceiling −1 dBFS</span></div>
+        </div>
         <div class="sliders">
           <div class="group-label">Layers</div>
           <label class="slider" for="sGrains">Grain cloud <input id="sGrains" type="range" min="0" max="100" value="70"><output id="oGrains">70</output></label>
@@ -205,43 +232,87 @@ const srcDur = () => source.channels[0].length / source.sampleRate;
 
 /* ---------- audio graph ---------- */
 let ctx = null, G = null;
+const CEIL = Math.pow(10, -1 / 20); // −1 dBFS output ceiling
+/*
+  Signal flow:
+  layers → master → tone → trim → glue comp → limiter → 4x-oversampled soft clip (−1 dBFS)
+         → PRINT bus ─┬→ take recorder
+                      ├→ K-weighted LUFS meter + peak meter
+                      └→ monitor volume → analyser → speakers
+  The volume slider only changes what you hear, never what gets recorded or metered.
+*/
 function ensureCtx() {
   if (ctx) return ctx;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const out = ctx.createGain(); out.gain.value = vol();
-  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3; comp.knee.value = 12;
-  const tone = ctx.createBiquadFilter(); tone.type = "lowpass"; tone.Q.value = 0.4;
+  const bq = (type, f, q, gain) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; if (q != null) b.Q.value = q; if (gain != null) b.gain.value = gain; return b; };
   const master = ctx.createGain(); master.gain.value = 0;
+  const tone = bq("lowpass", 18000, 0.4);
+  const trim = ctx.createGain();
+  const glue = ctx.createDynamicsCompressor(); glue.threshold.value = -24; glue.ratio.value = 2; glue.knee.value = 10; glue.attack.value = 0.03; glue.release.value = 0.35;
+  const lim = ctx.createDynamicsCompressor(); lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.15;
+  const clip = ctx.createWaveShaper(); clip.curve = makeClipCurve(CEIL); clip.oversample = "4x";
+  const print = ctx.createGain();
+  const monitor = ctx.createGain(); monitor.gain.value = vol();
   const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.85;
   const recDest = ctx.createMediaStreamDestination ? ctx.createMediaStreamDestination() : null;
+  master.connect(tone); tone.connect(trim); trim.connect(glue); glue.connect(lim); lim.connect(clip); clip.connect(print);
+  print.connect(monitor); monitor.connect(analyser); analyser.connect(ctx.destination);
+  if (recDest) print.connect(recDest);
+
+  // Reverb: 30 ms pre-delay → IR with early reflections → low shelf on the return
+  const verbIn = ctx.createGain(), pre = ctx.createDelay(0.2); pre.delayTime.value = 0.03;
   const verb = ctx.createConvolver(); verb.buffer = makeIR(ctx, 6);
-  const verbIn = ctx.createGain(), verbOut = ctx.createGain();
+  const shelf = bq("lowshelf", 250, null, -6), verbOut = ctx.createGain();
+  verbIn.connect(pre); pre.connect(verb); verb.connect(shelf); shelf.connect(verbOut); verbOut.connect(master);
+
   const delay = ctx.createDelay(2); delay.delayTime.value = 0.62;
   const fb = ctx.createGain(); fb.gain.value = 0.42;
-  const dlp = ctx.createBiquadFilter(); dlp.type = "lowpass"; dlp.frequency.value = 2600;
+  const dlp = bq("lowpass", 2600);
   const delayIn = ctx.createGain(); delayIn.gain.value = 0.35;
-  verbIn.connect(verb); verb.connect(verbOut); verbOut.connect(master);
   delayIn.connect(delay); delay.connect(dlp); dlp.connect(fb); fb.connect(delay); dlp.connect(verbIn); dlp.connect(master);
-  master.connect(tone); tone.connect(comp); comp.connect(out); out.connect(analyser); analyser.connect(ctx.destination);
-  if (recDest) out.connect(recDest);
+
+  // Meter taps: BS.1770 K-weighting per channel (high shelf +4 dB @ 1681 Hz, high-pass 38 Hz)
+  const split = ctx.createChannelSplitter(2); print.connect(split);
+  const kw = [0, 1].map(i => {
+    const hs = bq("highshelf", 1681, null, 4), hp = bq("highpass", 38, 0.5), an = ctx.createAnalyser();
+    an.fftSize = 32768; split.connect(hs, i); hs.connect(hp); hp.connect(an); return an;
+  });
+  const peakAn = ctx.createAnalyser(); peakAn.fftSize = 2048; print.connect(peakAn);
+
   const bus = name => {
     const g = ctx.createGain(), send = ctx.createGain(), dsend = ctx.createGain();
     g.connect(master); g.connect(send); send.connect(verbIn); g.connect(dsend); dsend.connect(delayIn);
     return { g, send, dsend, name };
   };
-  G = { out, comp, tone, master, analyser, recDest, verbOut, grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer") };
+  G = { monitor, trim, tone, master, analyser, recDest, verbOut, kw, peakAn, grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer") };
   G.drone.dsend.gain.value = 0;
   applyParams();
   return ctx;
 }
+function makeClipCurve(c) {
+  // linear up to 80 % of the ceiling, then a tanh knee that never exceeds it
+  const n = 8192, k = 0.8 * c, out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1) * 2 - 1, a = Math.abs(x);
+    out[i] = Math.sign(x) * (a <= k ? a : k + (c - k) * Math.tanh((a - k) / (c - k)));
+  }
+  return out;
+}
 function makeIR(c, secs) {
-  const len = Math.floor(c.sampleRate * secs), b = c.createBuffer(2, len, c.sampleRate);
+  const sr = c.sampleRate, len = Math.floor(sr * secs), b = c.createBuffer(2, len, sr);
   for (let ch = 0; ch < 2; ch++) {
     const d = b.getChannelData(ch); let lp = 0;
+    // early reflections: 12 sparse taps between 4 and 70 ms, different per side for width
+    for (let k = 0; k < 12; k++) {
+      const t = 0.004 + Math.pow(Math.random(), 1.3) * 0.066, i = Math.floor(t * sr);
+      const amp = (Math.random() < 0.5 ? -1 : 1) * 0.9 * Math.exp(-t * 25);
+      d[i] += amp; d[i + 1] += amp * 0.6; d[i + 2] += amp * 0.25;
+    }
+    // diffuse tail fading in from ~12 ms
     for (let i = 0; i < len; i++) {
-      const t = i / c.sampleRate;
+      const t = i / sr;
       lp += 0.35 * ((Math.random() * 2 - 1) - lp);
-      d[i] = lp * Math.exp(-t * 1.15) * Math.min(1, t * 60);
+      d[i] += lp * Math.exp(-t * 1.15) * clamp((t - 0.012) / 0.06, 0, 1);
     }
   }
   return b;
@@ -250,7 +321,21 @@ const vol = () => Math.pow($("vol").value / 100, 2) * 1.1;
 
 /* essence buffers, rebuilt whenever the selection changes */
 let ess = null; // {fwd, rev, loop, dur}
+/* Input normalizing: bring the essence to −20 dBFS RMS, without letting its peaks pass −1 dBFS
+   and with at most +30 dB of gain. RMS is a stand-in for loudness on a 3 s clip. */
+const ESS_RMS = Math.pow(10, -20 / 20);
+let essGain = 1;
+function computeEssGain() {
+  const sr = source.sampleRate, a = Math.floor(sel[0] * sr), b = Math.max(a + 1, Math.floor(sel[1] * sr));
+  let ss = 0, pk = 0, n = 0;
+  for (const ch of source.channels.slice(0, 2)) for (let i = a; i < b && i < ch.length; i++) { const v = ch[i]; ss += v * v; const av = Math.abs(v); if (av > pk) pk = av; n++; }
+  const rms = Math.sqrt(ss / Math.max(1, n));
+  essGain = rms < 1e-5 ? 1 : Math.min(ESS_RMS / rms, CEIL / Math.max(pk, 1e-9), 31.6);
+  return essGain;
+}
 function buildEssence() {
+  computeEssGain();
+  const gn = essGain;
   if (!ctx) return;
   const sr = source.sampleRate, a = Math.floor(sel[0] * sr), b = Math.max(a + Math.floor(0.08 * sr), Math.floor(sel[1] * sr));
   const nCh = Math.min(2, source.channels.length), n = b - a;
@@ -259,11 +344,10 @@ function buildEssence() {
   const loop = ctx.createBuffer(nCh, Math.max(1, loopN), sr);
   for (let ch = 0; ch < nCh; ch++) {
     const s = source.channels[ch].subarray(a, b), f = fwd.getChannelData(ch), r = rev.getChannelData(ch), l = loop.getChannelData(ch);
-    f.set(s);
-    for (let i = 0; i < n; i++) r[i] = s[n - 1 - i];
+    for (let i = 0; i < n; i++) { f[i] = s[i] * gn; r[i] = s[n - 1 - i] * gn; }
     for (let i = 0; i < loopN; i++) {
-      if (i < xf) { const p = i / xf; l[i] = s[i] * Math.sin(p * Math.PI / 2) + s[loopN + i] * Math.cos(p * Math.PI / 2); }
-      else l[i] = s[i];
+      if (i < xf) { const p = i / xf; l[i] = gn * (s[i] * Math.sin(p * Math.PI / 2) + s[loopN + i] * Math.cos(p * Math.PI / 2)); }
+      else l[i] = s[i] * gn;
     }
   }
   ess = { fwd, rev, loop, dur: n / sr };
@@ -274,6 +358,7 @@ const P = {};
 function readParams() {
   P.grains = $("sGrains").value / 100; P.drone = $("sDrone").value / 100; P.shimmer = $("sShimmer").value / 100;
   P.density = +$("sDensity").value; P.space = $("sSpace").value / 100; P.drift = $("sDrift").value / 100; P.bright = $("sBright").value / 100;
+  P.trim = +$("sTrim").value;
 }
 function applyParams() {
   readParams();
@@ -287,9 +372,11 @@ function applyParams() {
   G.shimmer.dsend.gain.setTargetAtTime(P.space * 0.7, t, tc);
   G.verbOut.gain.setTargetAtTime(0.4 + P.space * 0.8, t, tc);
   G.tone.frequency.setTargetAtTime(900 * Math.pow(20, P.bright), t, tc);
-  G.out.gain.setTargetAtTime(vol(), t, 0.05);
+  G.trim.gain.setTargetAtTime(Math.pow(10, P.trim / 20), t, 0.05);
+  G.monitor.gain.setTargetAtTime(vol(), t, 0.05);
 }
-const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v + "/s", Space: v => v, Drift: v => v, Bright: v => v };
+const dB = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + " dB";
+const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v + "/s", Space: v => v, Drift: v => v, Bright: v => v, Trim: v => dB(+v) };
 for (const k of Object.keys(outs)) $("s" + k).addEventListener("input", e => { $("o" + k).textContent = outs[k](e.target.value); applyParams(); });
 $("vol").addEventListener("input", applyParams);
 
@@ -316,8 +403,10 @@ function scheduleGrains() {
     nextGrain += -Math.log(1 - Math.random()) / rate;
   }
 }
+const HANN = Float32Array.from({ length: 64 }, (_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / 63));
 function playGrain(t) {
-  const ratio = scene.root * pick(scene.set.r) * (1 + rand(-0.004, 0.004));
+  // ±7 cent random detune per grain so the cloud blooms instead of beating
+  const ratio = scene.root * pick(scene.set.r) * Math.pow(2, rand(-7, 7) / 1200);
   const maxDur = clamp(1.4 / Math.sqrt(P.density), 0.12, 0.7);
   let dur = rand(0.06, maxDur);
   const span = ess.dur;
@@ -325,7 +414,7 @@ function playGrain(t) {
   const off = rand(0, Math.max(0, span - dur * ratio));
   const src = ctx.createBufferSource(); src.buffer = ess.fwd; src.playbackRate.value = ratio;
   const g = ctx.createGain(), amp = clamp(0.5 / Math.sqrt(P.density * dur * 3), 0.08, 0.45);
-  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(amp, t + dur * 0.4); g.gain.linearRampToValueAtTime(0, t + dur);
+  g.gain.value = 0; g.gain.setValueCurveAtTime(HANN.map(v => v * amp), t, dur); // Hann window
   const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
   src.connect(g);
   if (pan) { pan.pan.value = rand(-0.85, 0.85); g.connect(pan); pan.connect(G.grains.g); } else g.connect(G.grains.g);
@@ -339,11 +428,12 @@ function startDrone(fadeIn = 4) {
     const src = ctx.createBufferSource(); src.buffer = ess.loop; src.loop = true;
     src.playbackRate.value = scene.root * mult;
     const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cut; lp.Q.value = 2;
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 35; hp.Q.value = 0.707; // keep sub rumble out
     const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = rand(0.02, 0.05); lfoG.gain.value = cut * 0.7;
     lfo.connect(lfoG); lfoG.connect(lp.frequency);
     const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(lvl, t + fadeIn);
     const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-    src.connect(lp); lp.connect(g);
+    src.connect(hp); hp.connect(lp); lp.connect(g);
     if (pan) { pan.pan.value = mult === 0.5 ? -0.35 : 0.35; g.connect(pan); pan.connect(G.drone.g); } else g.connect(G.drone.g);
     src.start(t, rand(0, ess.loop.duration)); lfo.start(t);
     droneNodes.push({ src, g, lfo, mult, lp, cut });
@@ -403,6 +493,7 @@ async function start() {
   ensureCtx(); await ctx.resume();
   buildEssence();
   running = true;
+  resetLoudness();
   scene.n = 1; scene.root = 1; scene.set = SETS[0]; scene.densMul = 1;
   const t = ctx.currentTime;
   G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(1, t + 2.5);
@@ -441,7 +532,8 @@ function updateUI() {
 }
 function fmt(s) { const m = Math.floor(s / 60); return m + ":" + String(Math.floor(s % 60)).padStart(2, "0"); }
 function updateSelText() {
-  $("selText").textContent = `Essence ${sel[0].toFixed(2)}–${sel[1].toFixed(2)} s · ${(sel[1] - sel[0]).toFixed(2)} s`;
+  const g = 20 * Math.log10(computeEssGain());
+  $("selText").textContent = `Essence ${sel[0].toFixed(2)}–${sel[1].toFixed(2)} s · ${(sel[1] - sel[0]).toFixed(2)} s · normalized ${dB(g)}`;
 }
 
 /* ---------- loading files ---------- */
@@ -526,7 +618,7 @@ async function startPreview() {
   const sr = source.sampleRate, b = ctx.createBuffer(source.channels.length, source.channels[0].length, sr);
   source.channels.forEach((c, i) => b.copyToChannel(c, i));
   const s = ctx.createBufferSource(); s.buffer = b;
-  const g = ctx.createGain(); s.connect(g); g.gain.value = 0.9; g.connect(G.out);
+  const g = ctx.createGain(); s.connect(g); g.gain.value = 0.9; g.connect(G.monitor); // monitor only: not recorded or metered
   s.start(); preview = { s, t0: ctx.currentTime, off: 0 };
   s.onended = () => { if (preview && preview.s === s) { if (capStart != null) endCapture(); preview = null; $("playSrc").textContent = "▶ Play source"; } };
   $("playSrc").textContent = "■ Stop source";
@@ -656,6 +748,54 @@ function renderTakes() {
     li.append(info, btns); ul.append(li);
   });
 }
+
+/* ---------- loudness meter (BS.1770-style, approximate) ----------
+   Momentary = 400 ms mean square of the K-weighted print bus, sampled every 100 ms.
+   Short-term = mean of the last 3 s of those blocks. Integrated = gated mean
+   (−70 LUFS absolute gate, then −10 LU relative gate) since START. Peak = sample peak. */
+const LU = { blocks: [], m: -Infinity, s: -Infinity, i: -Infinity, pk: -Infinity, bufs: null, pbuf: null };
+const lk = z => z > 0 ? -0.691 + 10 * Math.log10(z) : -Infinity;
+const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+function resetLoudness() { LU.blocks = []; LU.m = LU.s = LU.i = LU.pk = -Infinity; }
+function meterTick() {
+  if (G && (running || G.master.gain.value > 0.001)) {
+    if (!LU.bufs) { LU.bufs = [new Float32Array(32768), new Float32Array(32768)]; LU.pbuf = new Float32Array(2048); }
+    const nM = Math.min(32768, Math.round(0.4 * ctx.sampleRate));
+    let z = 0;
+    G.kw.forEach((an, i) => { const b = LU.bufs[i]; an.getFloatTimeDomainData(b); let s = 0; for (let k = b.length - nM; k < b.length; k++) s += b[k] * b[k]; z += s / nM; });
+    LU.m = lk(z);
+    if (running) LU.blocks.push(z);
+    const st = LU.blocks.slice(-30); LU.s = st.length ? lk(avg(st)) : -Infinity;
+    const g1 = LU.blocks.filter(v => lk(v) > -70);
+    if (g1.length) { const rel = lk(avg(g1)) - 10; const g2 = g1.filter(v => lk(v) > rel); LU.i = g2.length ? lk(avg(g2)) : -Infinity; }
+    G.peakAn.getFloatTimeDomainData(LU.pbuf); let p = 0; for (const v of LU.pbuf) { const a = Math.abs(v); if (a > p) p = a; }
+    LU.pk = Math.max(p > 0 ? 20 * Math.log10(p) : -Infinity, LU.pk - 0.5); // falls back 5 dB/s
+  } else if (G) { LU.m = LU.s = -Infinity; LU.pk = Math.max(-Infinity, LU.pk - 0.5); }
+  renderMeter();
+}
+const fmtL = v => isFinite(v) && v > -99 ? v.toFixed(1).replace("-", "−") : "–";
+function renderMeter() {
+  const tgt = +$("target").value, pos = v => clamp((v + 40) / 40, 0, 1) * 100;
+  $("lM").textContent = fmtL(LU.m); $("lS").textContent = fmtL(LU.s); $("lI").textContent = fmtL(LU.i); $("lP").textContent = fmtL(LU.pk);
+  $("mFill").style.width = (isFinite(LU.m) ? pos(LU.m) : 0) + "%";
+  $("mFill").classList.toggle("over", LU.m > tgt + 1);
+  $("mTarget").style.left = pos(tgt) + "%";
+  const ready = isFinite(LU.i) && LU.blocks.length >= 30;
+  $("match").disabled = !ready;
+  let msg;
+  const T = "−" + Math.abs(tgt);
+  if (ready) { const d = LU.i - tgt; msg = Math.abs(d) <= 1 ? `On target: integrated loudness is within 1 LU of ${T} LUFS.` : `Integrated loudness is ${Math.abs(d).toFixed(1)} LU ${d > 0 ? "above" : "below"} the ${T} LUFS target.`; }
+  else msg = running ? "Measuring integrated loudness (needs 3 s)…" : "Start the soundscape to measure loudness.";
+  if ($("lDiff").textContent !== msg) $("lDiff").textContent = msg;
+}
+$("target").addEventListener("change", renderMeter);
+$("match").addEventListener("click", () => {
+  if (!isFinite(LU.i)) return;
+  const nv = clamp(Math.round((P.trim + (+$("target").value - LU.i)) * 2) / 2, -12, 12);
+  $("sTrim").value = nv; $("oTrim").textContent = dB(nv); applyParams();
+  LU.blocks = []; LU.i = -Infinity; // re-measure at the new level
+});
+setInterval(meterTick, 100);
 
 /* ---------- boot ---------- */
 readTokens(); readParams(); updateSelText(); computePeaks();
