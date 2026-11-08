@@ -129,6 +129,34 @@ p.readout { margin: 0; line-height: 1.45; }
 progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .slider input[type=text] { padding: 6px 8px; font-family: var(--mono); font-size: 13px; }
 .slider > button { padding: 7px 8px; font-size: 13px; justify-content: center; }
+.hdr-ctl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+#helpBtn { font: 500 12px/1 var(--mono); letter-spacing: 0.1em; padding: 9px 14px; }
+/* Help window */
+dialog#help { width: min(860px, calc(100vw - 32px)); max-height: min(86vh, 900px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); overflow: hidden; }
+dialog#help[open] { display: flex; flex-direction: column; }
+dialog#help::backdrop { background: rgba(8, 14, 18, 0.55); }
+.help-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.help-head h2 { margin: 0; font-family: var(--display); font-size: 22px; }
+.help-body { overflow-y: auto; min-height: 0; flex: 1 1 auto; padding: 4px 20px 24px; display: grid; gap: 22px; }
+.help-toc { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 14px; }
+.help-toc button { padding: 6px 10px; font-size: 12.5px; }
+.help-body section { display: grid; gap: 10px; scroll-margin-top: 12px; }
+.help-body h3 { margin: 0; font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.help-body p, .help-body ol { margin: 0; max-width: 70ch; line-height: 1.55; }
+.help-body ol { padding-left: 20px; display: grid; gap: 6px; }
+.help-body dl { margin: 0; display: grid; gap: 10px; }
+.help-body dl > div { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 4px 16px; }
+@media (max-width: 640px) { .help-body dl > div { grid-template-columns: minmax(0, 1fr); } }
+.help-body dt { font-weight: 600; font-size: 14px; display: flex; align-items: flex-start; gap: 8px; }
+.help-body dd { margin: 0; color: var(--ink); opacity: 0.88; line-height: 1.55; max-width: 70ch; }
+.sw { flex: none; width: 14px; height: 14px; margin-top: 3px; border-radius: 3px; }
+.sw-dot { border-radius: 50%; background: var(--accent); transform: scale(0.6); }
+.sw-warm { border-radius: 50%; background: var(--warm); opacity: 0.7; }
+.sw-band { background: linear-gradient(transparent, var(--warm), transparent); }
+.sw-line { height: 3px; margin-top: 8px; background: var(--ink); opacity: 0.5; }
+.sw-scan { background: linear-gradient(90deg, transparent 40%, var(--ink) 40%, var(--ink) 55%, transparent 55%), color-mix(in srgb, var(--ink) 12%, transparent); }
+.sw-spec { background: color-mix(in srgb, var(--accent) 35%, transparent); clip-path: polygon(0 100%, 0 40%, 30% 10%, 60% 50%, 100% 70%, 100% 100%); }
+.sw-ring { border: 1.5px solid var(--muted); border-radius: 50%; background: radial-gradient(var(--ink) 25%, transparent 28%); }
 @media (prefers-reduced-motion: reduce) { button.rec.on .rec-dot { animation: none; } .mfill { transition: none; } }
 </style>
 
@@ -138,7 +166,10 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
       <h1>Ambient Soundscape <span>Generator</span></h1>
       <p class="lede">Give it a jingle, a sound or a piece of music. Capture a few seconds as its essence, and it grows an endless, slowly shifting soundscape from that fragment.</p>
     </div>
-    <label class="vol" for="vol">VOLUME <input id="vol" type="range" min="0" max="100" value="80"></label>
+    <div class="hdr-ctl">
+      <label class="vol" for="vol">VOLUME <input id="vol" type="range" min="0" max="100" value="80"></label>
+      <button id="helpBtn" type="button" aria-haspopup="dialog">HELP</button>
+    </div>
   </header>
 
   <div class="top">
@@ -287,6 +318,160 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
 
   <footer>A browser rebuild of the <a href="https://github.com/dmpavlou/Ambient-Soundscape-Generator" target="_blank" rel="noopener">Ambient Soundscape Generator</a> by Dimitra Maria Pavlou, built with the Web Audio API. Nothing you load leaves your browser.</footer>
 </div>
+
+<dialog id="help" aria-labelledby="helpTitle">
+  <div class="help-head">
+    <h2 id="helpTitle">Help</h2>
+    <button id="helpClose" type="button" aria-label="Close help">Close ✕</button>
+  </div>
+  <div class="help-body">
+    <nav class="help-toc" aria-label="Help contents">
+      <button type="button" data-go="hs-start">Quick start</button>
+      <button type="button" data-go="hs-stage">Main window</button>
+      <button type="button" data-go="hs-sound">Soundscape</button>
+      <button type="button" data-go="hs-src">Source and essence</button>
+      <button type="button" data-go="hs-form">Form</button>
+      <button type="button" data-go="hs-layers">Layers</button>
+      <button type="button" data-go="hs-tex">Grain texture</button>
+      <button type="button" data-go="hs-exp">Export</button>
+      <button type="button" data-go="hs-char">Character &amp; tape</button>
+      <button type="button" data-go="hs-space">Space</button>
+      <button type="button" data-go="hs-harm">Harmony</button>
+      <button type="button" data-go="hs-takes">Live takes</button>
+    </nav>
+
+    <section id="hs-start">
+      <h3>Quick start</h3>
+      <ol>
+        <li>Press <b>START</b>. The built-in example chime grows into a soundscape straight away.</li>
+        <li>To use your own sound, load a file in <b>Source and essence</b> and pick about 3 seconds of it. That fragment is the <i>essence</i>: everything you hear is made from it.</li>
+        <li>Shape the sound with the widgets while it plays. Most changes are heard immediately; Arc and Seed apply on the next START.</li>
+        <li>When you like it, use <b>Export</b> to render a WAV at a set loudness, or <b>Live takes</b> to record what's playing.</li>
+      </ol>
+      <p>The overall <b>Volume</b> slider at the top only sets how loud you hear it. It never changes the loudness meter, takes or exports.</p>
+    </section>
+
+    <section id="hs-stage">
+      <h3>The main window</h3>
+      <p>A live map of what the engine is doing. Left to right is the position in the essence, from its start to its end. Bottom to top is pitch: the lines marked ×¼, ×½, ×1, ×2 and ×4 are two octaves down, one octave down, original pitch, one octave up and two octaves up.</p>
+      <dl class="legend">
+        <div><dt><span class="sw sw-dot"></span>Small blue dots</dt><dd>Single grains. Their place shows where in the essence each grain was taken from and at what pitch; bigger dots are longer grains.</dd></div>
+        <div><dt><span class="sw sw-warm"></span>Large warm dots</dt><dd>Shimmer swells: reversed fragments played an octave or more up, fading in and out over a few seconds.</dd></div>
+        <div><dt><span class="sw sw-band"></span>Yellow bands</dt><dd>The two <b>Slow drone</b> voices: your essence looped at half speed (one octave down) and quarter speed (two octaves down), each through a slowly moving filter. Their height is their current pitch. On every scene change they glide to the new chord over 6–12 seconds, so when they slide up or down the harmony is changing. They get brighter or fainter with the Slow drone slider.</dd></div>
+        <div><dt><span class="sw sw-line"></span>Thin line marked "freeze"</dt><dd>The freeze pad, at the current chord root.</dd></div>
+        <div><dt><span class="sw sw-scan"></span>Vertical line with a shaded band</dt><dd>The scan head and its spray range. Grains are taken from inside the shaded band.</dd></div>
+        <div><dt><span class="sw sw-spec"></span>Shaded shape along the bottom</dt><dd>The spectrum of the output, low frequencies on the left.</dd></div>
+        <div><dt><span class="sw sw-ring"></span>Circle in the top right</dt><dd>Only in binaural mode: a top view of your head (front is up) with each grain and shimmer placed by direction and distance.</dd></div>
+      </dl>
+      <p>The text along the top shows the scene number, the chord degree and key (for example <i>V · A major</i>), the interval set the grains use, the active slot when you have several, and the arc's progress.</p>
+    </section>
+
+    <section id="hs-sound">
+      <h3>Soundscape</h3>
+      <dl class="items">
+        <div><dt>START / STOP</dt><dd>Starts the engine with a 2.5 s fade-in, or fades it out over 1.5 s.</dd></div>
+        <div><dt>Loudness meter</dt><dd>Measures what you'd record or export, in LUFS (the broadcast loudness unit). <b>Moment.</b> is the last 0.4 s, <b>Short</b> the last 3 s, <b>Integr.</b> the whole run since START, and <b>Peak</b> the loudest sample level. The bar shows momentary loudness and turns warm above the target.</dd></div>
+        <div><dt>Target</dt><dd>−23 LUFS for broadcast, −16 for streaming, −14 for loud streaming. Export uses the same target.</dd></div>
+        <div><dt>Output trim</dt><dd>Gain before the master limiter, −12 to +12 dB.</dd></div>
+        <div><dt>Match target</dt><dd>After about 3 s of playing, sets the trim so the integrated loudness lands on the target, then measures again.</dd></div>
+        <div><dt>Limiter ceiling</dt><dd>A limiter and a soft clipper keep the output under −1 dBFS.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-src">
+      <h3>Source and essence</h3>
+      <dl class="items">
+        <div><dt>Slots A–D</dt><dd>Up to four essences. With more than one, each scene change crossfades to the next slot in order, so the soundscape moves through them like chapters. Click a slot to edit it; <b>+ Add slot</b> starts the new one on the next stretch of the same file. Each slot shows its detected key.</dd></div>
+        <div><dt>Choose audio file</dt><dd>Load an .mp3, .wav, .aif, .aiff or .flac file, or drop one on the page. The loudest 3 seconds are selected for you. Files stay in your browser.</dd></div>
+        <div><dt>Play source</dt><dd>Plays the whole file so you can find the part you want. You hear it, but it isn't metered or recorded.</dd></div>
+        <div><dt>Capture essence</dt><dd>Press once to start and again to stop while the source plays; that stretch becomes the essence. You can also drag across the waveform.</dd></div>
+        <div><dt>Essence readout</dt><dd>Start, end and length of the essence, and the gain applied to bring it to a standard level (−20 dBFS RMS, peaks capped at −1 dBFS), so quiet and loud clips behave the same.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-form">
+      <h3>Form</h3>
+      <dl class="items">
+        <div><dt>Arc</dt><dd>How the soundscape develops over the length. <b>Loop</b> stays steady. <b>Sunrise</b> starts sparse and dark and opens up, then holds. <b>Bloom</b> rises to a peak halfway and falls back to silence. <b>Sleep</b> thins out and fades to silence. Bloom and Sleep stop by themselves at the end.</dd></div>
+        <div><dt>Length</dt><dd>0:30 to 30:00. Sets both the arc's length and the export length.</dd></div>
+        <div><dt>Seed</dt><dd>The number behind every random choice. The same seed with the same settings and essence plays the same soundscape, live or exported. <b>New</b> picks a random seed. The seed is kept in the page link, so you can share an exact soundscape.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-layers">
+      <h3>Layers</h3>
+      <dl class="items">
+        <div><dt>Grain cloud</dt><dd>Level of the grains: short, smoothly faded fragments of the essence, pitched to the current chord and spread across the stereo field.</dd></div>
+        <div><dt>Slow drone</dt><dd>Level of the two slowed-down loops of the essence (the yellow bands in the main window).</dd></div>
+        <div><dt>Shimmer</dt><dd>Level of the reversed, high-pitched swells. Higher settings also make them more frequent.</dd></div>
+        <div><dt>Freeze pad</dt><dd>Level of a frozen tone: the spectrum of the essence at the scan head, held as an endless pad with no loop point. It refreezes on every scene change.</dd></div>
+        <div><dt>Refreeze at scan head</dt><dd>Captures a new freeze right now, from wherever the scan head is.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-tex">
+      <h3>Grain texture</h3>
+      <dl class="items">
+        <div><dt>Scan speed</dt><dd>How fast the scan head moves through the essence, as a multiple of real time. 0 holds one spot, 1× is the original speed, and negative values run backwards. Slow speeds give the classic time-stretched sound.</dd></div>
+        <div><dt>Spray</dt><dd>How far around the scan head grains may come from, as a share of the essence. 100% means anywhere.</dd></div>
+        <div><dt>Grain size</dt><dd>Average grain length, 20–800 ms. Short grains sound grainy and bright; long grains sound smooth and recognisable.</dd></div>
+        <div><dt>Pitch jitter</dt><dd>Random detuning per grain, in cents (a cent is 1/100 of a semitone). A little makes the cloud bloom instead of beating; a lot makes it wobbly.</dd></div>
+        <div><dt>Density</dt><dd>Average grains per second. Scenes and arcs vary it around this value.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-exp">
+      <h3>Export</h3>
+      <p>Renders the soundscape faster than real time with the same seed and settings as live playback, then saves 24-bit WAV at your device's sample rate. Playback stops while it renders.</p>
+      <dl class="items">
+        <div><dt>Info line</dt><dd>Length, arc, seed, format and loudness target of the next export.</dd></div>
+        <div><dt>Loudness</dt><dd>The mix is set to the meter's target, with peaks kept at or below −1 dBTP (true peak, which includes peaks between samples). If that needs more level than the limiter allows, the mix is rendered a second time into the limiter.</dd></div>
+        <div><dt>Seamless loop</dt><dd>Only with the Loop arc. The end blends into the start so the file loops without a click or a gap, for games, installations and apps.</dd></div>
+        <div><dt>Stems</dt><dd>Also saves grains, drone (with the root tone), shimmer and freeze as separate files. They're taken before the master limiter at the mix's gain, so they add back up to the mix.</dd></div>
+        <div><dt>Size and limits</dt><dd>The size estimate is shown before you render. Exports are limited to 15 minutes, and to 5 minutes with stems.</dd></div>
+        <div><dt>Files</dt><dd>In claude.ai the WAV files come in a ZIP, with a notes file listing the seed, settings and measured loudness. On a normal web page a single mix saves as a plain .wav.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-char">
+      <h3>Character &amp; tape</h3>
+      <dl class="items">
+        <div><dt>Drift</dt><dd>How often scenes change, from about every 34 s at low settings to about every 10 s at 100. At 0 the scene stays put. Scenes change chord, grain intervals and density, and move to the next slot.</dd></div>
+        <div><dt>Brightness</dt><dd>A low-pass filter on everything, from dark and muffled to fully open.</dd></div>
+        <div><dt>Wow &amp; flutter</dt><dd>Slow and fast pitch wobble, like tape running unevenly. Up to about ±10 cents.</dd></div>
+        <div><dt>Saturation</dt><dd>Soft tape-style saturation that rounds off peaks, with a little low-end warmth.</dd></div>
+        <div><dt>Hiss</dt><dd>Quiet, band-limited tape noise. It fades with the soundscape.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-space">
+      <h3>Space</h3>
+      <dl class="items">
+        <div><dt>Reverb level</dt><dd>How much of every layer goes to the reverb and echo.</dd></div>
+        <div><dt>Reverb type</dt><dd><b>Hall</b>: 6 s, with early reflections. <b>Plate</b>: 3.5 s, dense and bright. <b>Spring</b>: 2 s, with the dripping sound of a spring reverb. Switching crossfades smoothly while playing.</dd></div>
+        <div><dt>Load your own IR</dt><dd>Use a recorded impulse response, for example from a real church, as the reverb (WAV or AIFF, up to 12 s). It's added to the Reverb type list.</dd></div>
+        <div><dt>Binaural mode</dt><dd>For headphones. Grains and shimmer are placed all around your head, and the grain cloud slowly circles you once every 40 s. Farther sounds are quieter and duller. Drones and pads stay a normal stereo bed.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-harm">
+      <h3>Harmony</h3>
+      <dl class="items">
+        <div><dt>Key detection</dt><dd>Each essence is analysed for its key (for example D major) and tuning in cents. The confidence (r) shows how clear the key is; below 0.5 it counts as unclear.</dd></div>
+        <div><dt>Follow detected key</dt><dd>When slot A has a clear key, scenes move between the I, IV and V chords of that key, grain chords use the key's own third, and slots B–D are transposed to slot A's key. Off, or with an unclear key, scenes move freely.</dd></div>
+        <div><dt>Root tone</dt><dd>A low sine on the detected keynote, with a soft octave and fifth, following each chord change.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-takes">
+      <h3>Live takes</h3>
+      <dl class="items">
+        <div><dt>Record take</dt><dd>Click once to start recording what's playing and again to stop. Takes record in real time, without the Volume slider, as .webm (or .mp4 in Safari).</dd></div>
+        <div><dt>Takes list</dt><dd>Play a take back, or save it. Name the next take in the field above. For exact length, loudness and WAV files, use Export instead.</dd></div>
+      </dl>
+    </section>
+  </div>
+</dialog>
 
 <script>
 (() => {
@@ -1725,6 +1910,24 @@ $("follow").addEventListener("change", () => {
     retuneVoices(ctx.currentTime, 3); updateScene();
   }
 });
+
+/* ---------- help window ---------- */
+const helpDlg = $("help");
+const helpBody = helpDlg.querySelector(".help-body");
+function helpGo(id, smooth) {
+  const top = helpBody.scrollTop + $(id).getBoundingClientRect().top - helpBody.getBoundingClientRect().top - 12;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  helpBody.scrollTo({ top, behavior: smooth && !reduce ? "smooth" : "auto" });
+}
+function openHelp(sectionId) {
+  if (helpDlg.showModal) { if (!helpDlg.open) helpDlg.showModal(); } else helpDlg.setAttribute("open", "");
+  if (sectionId) helpGo(sectionId, false);
+}
+function closeHelp() { if (helpDlg.close) helpDlg.close(); else helpDlg.removeAttribute("open"); $("helpBtn").focus(); }
+$("helpBtn").addEventListener("click", () => openHelp());
+$("helpClose").addEventListener("click", closeHelp);
+helpDlg.addEventListener("click", e => { if (e.target === helpDlg) closeHelp(); }); // click on the backdrop
+helpDlg.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => helpGo(b.dataset.go, true)));
 
 /* ---------- boot ---------- */
 { const m = location.hash.match(/^#seed-(\d{1,9})$/); $("seed").value = m ? m[1] : String(1 + Math.floor(Math.random() * 99999)); }
