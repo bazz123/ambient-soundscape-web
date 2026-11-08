@@ -129,6 +129,11 @@ p.readout { margin: 0; line-height: 1.45; }
 progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .slider input[type=text] { padding: 6px 8px; font-family: var(--mono); font-size: 13px; }
 .slider > button { padding: 7px 8px; font-size: 13px; justify-content: center; }
+input[type=text], select { box-sizing: border-box; max-width: 100%; }
+.preset-save { display: flex; gap: 8px; min-width: 0; }
+.preset-save input { flex: 1 1 auto; min-width: 0; padding: 7px 9px; font-size: 13px; }
+.preset-save button { padding: 7px 10px; font-size: 13px; flex: none; }
+#presetDel.armed { border-color: var(--rec); color: var(--rec); }
 .hdr-ctl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 #helpBtn { font: 500 12px/1 var(--mono); letter-spacing: 0.1em; padding: 9px 14px; }
 /* Help window */
@@ -223,7 +228,12 @@ dialog#help::backdrop { background: rgba(8, 14, 18, 0.55); }
     </section>
 
     <section class="panel w" aria-labelledby="h-form">
-      <h2 id="h-form">Form</h2>
+      <h2 id="h-form">Presets &amp; form</h2>
+      <div class="sliders">
+        <div class="slider"><label for="preset">Preset</label><select id="preset"></select><button id="vary" type="button" title="Nudge the sound settings a little and pick a new seed">Vary</button></div>
+      </div>
+      <p class="hint" id="presetNote">Default settings. Pick a preset as a starting point.</p>
+      <div class="preset-save"><input id="presetName" type="text" maxlength="40" autocomplete="off" placeholder="Name for your preset" aria-label="Name for your preset"><button id="presetSave" type="button">Save</button><button id="presetDel" type="button" disabled>Delete</button></div>
       <div class="sliders">
         <div class="slider"><label for="arcType">Arc</label><select id="arcType"><option value="loop">Loop · steady</option><option value="sunrise">Sunrise · opens up</option><option value="bloom">Bloom · rises, then falls</option><option value="sleep">Sleep · fades out</option></select><span></span></div>
         <label class="slider" for="sLen">Length <input id="sLen" type="range" min="1" max="60" value="10"><output id="oLen">5:00</output></label>
@@ -330,6 +340,7 @@ dialog#help::backdrop { background: rgba(8, 14, 18, 0.55); }
       <button type="button" data-go="hs-stage">Main window</button>
       <button type="button" data-go="hs-sound">Soundscape</button>
       <button type="button" data-go="hs-src">Source and essence</button>
+      <button type="button" data-go="hs-presets">Presets</button>
       <button type="button" data-go="hs-form">Form</button>
       <button type="button" data-go="hs-layers">Layers</button>
       <button type="button" data-go="hs-tex">Grain texture</button>
@@ -386,6 +397,23 @@ dialog#help::backdrop { background: rgba(8, 14, 18, 0.55); }
         <div><dt>Play source</dt><dd>Plays the whole file so you can find the part you want. You hear it, but it isn't metered or recorded.</dd></div>
         <div><dt>Capture essence</dt><dd>Press once to start and again to stop while the source plays; that stretch becomes the essence. You can also drag across the waveform.</dd></div>
         <div><dt>Essence readout</dt><dd>Start, end and length of the essence, and the gain applied to bring it to a standard level (−20 dBFS RMS, peaks capped at −1 dBFS), so quiet and loud clips behave the same.</dd></div>
+      </dl>
+    </section>
+
+    <section id="hs-presets">
+      <h3>Presets</h3>
+      <p>Presets sit at the top of the <b>Presets &amp; form</b> widget. A built-in preset sets the sound controls it's designed around and puts every other sound control back to its default, so each one is a clean starting point. Your loudness target, export options and seed stay as they are, except in Brand Bed, which sets up its own export. As soon as you move a control by hand, the menu shows <i>Custom settings</i>.</p>
+      <dl class="items">
+        <div><dt>Deep Focus</dt><dd>For work and study. Slow, long grains, few scene changes, a darker tone kept below the speech range.</dd></div>
+        <div><dt>Sleep</dt><dd>Warm and dark with no shimmer, so no sharp highs. Sleep arc over 30 minutes: it thins out, fades to silence and stops.</dd></div>
+        <div><dt>Morning Light</dt><dd>Sunrise arc over 10 minutes, from dim and sparse to bright and full, with a plate reverb for sparkle.</dd></div>
+        <div><dt>Frozen Lake</dt><dd>Led by the freeze pad. Scan speed 0 keeps the grains on one moment of the clip; nearly still.</dd></div>
+        <div><dt>Glass Rain</dt><dd>Very short, dense, bright grains that turn the clip into glittering texture. Binaural mode is on, so use headphones.</dd></div>
+        <div><dt>Old Tape Memory</dt><dd>A worn cassette: strong wow and flutter, saturation and hiss, through the spring reverb.</dd></div>
+        <div><dt>Cathedral</dt><dd>A huge hall with a long reverb. The scan head runs slowly backwards, so attacks bloom instead of strike. Load a church impulse response in Space for the real thing.</dd></div>
+        <div><dt>Brand Bed</dt><dd>For sound branding. Low spray and medium grains keep a jingle recognisable, Follow detected key keeps it in key, and Export is set to a 2:00 seamless loop at −16 LUFS.</dd></div>
+        <div><dt>Vary</dt><dd>Moves each sound setting by up to 8% of its range and picks a new seed, for a fresh variation on what you have. Layers that are off stay off.</dd></div>
+        <div><dt>Save / Delete</dt><dd>Type a name and press Save to keep the current settings, including the seed, as your own preset. Saving under an existing name updates it. Your presets are stored in this browser only and appear under <i>Your presets</i>. Delete asks you to confirm first.</dd></div>
       </dl>
     </section>
 
@@ -1911,6 +1939,118 @@ $("follow").addEventListener("change", () => {
   }
 });
 
+/* ---------- presets ----------
+   A preset is a set of control values keyed by element id (slider values in the sliders' own units:
+   Scan is speed × 100, Length is half-minutes). Built-in presets reset every sound control they
+   don't mention to its default, so each is a clean starting point; they leave the loudness target,
+   export options and seed alone unless they set them. Your own presets are stored in this browser
+   and include the seed. */
+const PRESET_CORE = ["arcType", "sLen", "sGrains", "sDrone", "sShimmer", "sFreeze", "sScan", "sSpray", "sSize", "sJitter", "sDensity",
+  "sDrift", "sBright", "sWow", "sSat", "sHiss", "sSpace", "irType", "binaural", "sRoot", "follow"];
+const PRESET_EXTRA = ["target", "expLoop"];
+const BUILTIN = [
+  { id: "focus", name: "Deep Focus", note: "For work and study: slow, long grains and few changes, kept below the speech range.",
+    v: { arcType: "loop", sGrains: 45, sDrone: 60, sShimmer: 15, sFreeze: 45, sScan: 5, sSpray: 15, sSize: 400, sDensity: 6, sDrift: 20, sBright: 40, irType: "hall", sSpace: 60 } },
+  { id: "sleep", name: "Sleep", note: "Warm and dark with no sharp highs. Fades to silence over 30 minutes, then stops.",
+    v: { arcType: "sleep", sLen: 60, sGrains: 35, sDrone: 70, sShimmer: 0, sFreeze: 50, sScan: 3, sSpray: 10, sSize: 600, sDensity: 4, sDrift: 10, sBright: 25, sHiss: 5, sRoot: 40, irType: "hall", sSpace: 70 } },
+  { id: "morning", name: "Morning Light", note: "Opens up from dim and sparse to bright and full over 10 minutes.",
+    v: { arcType: "sunrise", sLen: 20, sGrains: 70, sDrone: 40, sShimmer: 55, sScan: 20, sSpray: 25, sDensity: 12, sBright: 75, irType: "plate", sSpace: 55 } },
+  { id: "frozen", name: "Frozen Lake", note: "Led by the freeze pad. Scan speed 0 keeps the grains on one moment of the clip.",
+    v: { sGrains: 20, sDrone: 50, sShimmer: 25, sFreeze: 80, sScan: 0, sSpray: 5, sSize: 700, sJitter: 3, sDensity: 3, sDrift: 15, irType: "hall", sSpace: 80 } },
+  { id: "glass", name: "Glass Rain", note: "Short, dense, bright grains that turn the clip into glittering texture. Binaural is on: use headphones.",
+    v: { sGrains: 85, sDrone: 20, sShimmer: 50, sFreeze: 10, sScan: 50, sSpray: 60, sSize: 40, sJitter: 15, sDensity: 26, sDrift: 60, sBright: 85, sWow: 0, sHiss: 0, irType: "plate", sSpace: 50, binaural: true } },
+  { id: "tape", name: "Old Tape Memory", note: "A worn cassette: strong wow and flutter, saturation and hiss through a spring reverb.",
+    v: { sGrains: 60, sDrone: 55, sScan: 10, sSize: 250, sJitter: 10, sBright: 35, sWow: 70, sSat: 60, sHiss: 45, irType: "spring", sSpace: 45 } },
+  { id: "cathedral", name: "Cathedral", note: "A huge hall. Backwards scanning makes attacks bloom instead of strike. Load a church IR in Space for the real thing.",
+    v: { sGrains: 50, sDrone: 65, sShimmer: 35, sFreeze: 40, sScan: -8, sSpray: 30, sSize: 500, sDensity: 7, sDrift: 30, irType: "hall", sSpace: 95, sRoot: 45 } },
+  { id: "brand", name: "Brand Bed", note: "For sound branding: keeps a jingle recognisable and in key. Set up for a 2:00 seamless loop at −16 LUFS in Export.",
+    v: { arcType: "loop", sLen: 4, sGrains: 65, sDrone: 45, sShimmer: 30, sFreeze: 25, sScan: 15, sSpray: 20, sSize: 180, sDensity: 9, sDrift: 40, follow: true, sHiss: 0, irType: "plate", sSpace: 55, target: "-16", expLoop: true } }
+];
+const ctlVal = el => el.type === "checkbox" ? el.checked : el.value;
+const PRESET_DEFAULTS = Object.fromEntries(PRESET_CORE.map(id => [id, ctlVal($(id))]));
+function setCtl(id, v) {
+  const el = $(id); if (!el) return;
+  if (el.type === "checkbox") { if (el.checked === !!v) return; el.checked = !!v; el.dispatchEvent(new Event("change")); return; }
+  if (id === "irType" && v === "custom" && !customIR) v = "hall";
+  if (String(el.value) === String(v)) return;
+  el.value = v;
+  el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input")); // runs the control's own handler (output text, audio, export info)
+}
+function applyPreset(v) {
+  for (const id of PRESET_CORE) setCtl(id, id in v ? v[id] : PRESET_DEFAULTS[id]);
+  for (const id of PRESET_EXTRA) if (id in v) setCtl(id, v[id]);
+  if (v.seed) setSeed(v.seed);
+  renderMeter(); updateExportInfo();
+}
+const PRESET_KEY = "ssg-presets-v1";
+let userPresets = {};
+try { userPresets = JSON.parse(localStorage.getItem(PRESET_KEY) || "{}") || {}; } catch (e) { userPresets = {}; }
+function storeUserPresets() { try { localStorage.setItem(PRESET_KEY, JSON.stringify(userPresets)); return true; } catch (e) { return false; } }
+function presetNote(value) {
+  if (value.startsWith("b:")) return BUILTIN.find(p => "b:" + p.id === value).note;
+  if (value.startsWith("u:")) { const p = userPresets[value.slice(2)]; return `Your preset, saved with seed ${p.seed}. It's stored in this browser only.`; }
+  return "";
+}
+function renderPresetMenu(selected, note) {
+  const sel = $("preset"); sel.textContent = "";
+  const opt = (parent, value, text, disabled) => { const o = document.createElement("option"); o.value = value; o.textContent = text; o.disabled = !!disabled; parent.append(o); };
+  opt(sel, "", "Custom settings", true);
+  const g1 = document.createElement("optgroup"); g1.label = "Built-in"; BUILTIN.forEach(p => opt(g1, "b:" + p.id, p.name)); sel.append(g1);
+  const names = Object.keys(userPresets).sort((a, b) => a.localeCompare(b));
+  if (names.length) { const g2 = document.createElement("optgroup"); g2.label = "Your presets"; names.forEach(n => opt(g2, "u:" + n, n)); sel.append(g2); }
+  sel.value = selected || "";
+  $("presetDel").disabled = !sel.value.startsWith("u:"); disarmDelete();
+  $("presetNote").textContent = note || presetNote(sel.value) || "Your own settings. Name and save them to keep them.";
+}
+$("preset").addEventListener("change", e => {
+  const v = e.target.value;
+  if (v.startsWith("b:")) applyPreset(BUILTIN.find(p => "b:" + p.id === v).v);
+  else if (v.startsWith("u:")) applyPreset(userPresets[v.slice(2)]);
+  if (v.startsWith("u:")) $("presetName").value = v.slice(2);
+  renderPresetMenu(v, running && v ? presetNote(v) + " Arc and seed apply on the next START." : null);
+});
+// Any hand edit of a preset-controlled setting turns the menu to "Custom settings".
+const presetIds = new Set(PRESET_CORE);
+for (const ev of ["input", "change"]) document.addEventListener(ev, e => {
+  if (e.isTrusted && presetIds.has(e.target.id) && $("preset").value) renderPresetMenu("");
+}, true);
+$("presetSave").addEventListener("click", () => {
+  const name = $("presetName").value.trim().slice(0, 40);
+  if (!name) { $("presetNote").textContent = "Type a name for your preset first."; $("presetName").focus(); return; }
+  readParams();
+  const snap = {};
+  for (const id of [...PRESET_CORE, ...PRESET_EXTRA]) snap[id] = ctlVal($(id));
+  snap.seed = seedVal();
+  const existed = name in userPresets;
+  userPresets[name] = snap;
+  if (!storeUserPresets()) { delete userPresets[name]; $("presetNote").textContent = "Couldn't save: this browser view blocks local storage."; return; }
+  renderPresetMenu("u:" + name, `${existed ? "Updated" : "Saved"} “${name}” with seed ${snap.seed}, in this browser only.`);
+});
+let delTimer = null;
+function disarmDelete() { clearTimeout(delTimer); $("presetDel").classList.remove("armed"); $("presetDel").textContent = "Delete"; }
+$("presetDel").addEventListener("click", () => {
+  const v = $("preset").value; if (!v.startsWith("u:")) return;
+  const btn = $("presetDel");
+  if (!btn.classList.contains("armed")) { // two-step delete instead of a confirm() dialog
+    btn.classList.add("armed"); btn.textContent = "Confirm"; $("presetNote").textContent = `Press Confirm to delete “${v.slice(2)}”. This can't be undone.`;
+    delTimer = setTimeout(() => renderPresetMenu(v), 5000); return;
+  }
+  delete userPresets[v.slice(2)]; storeUserPresets();
+  renderPresetMenu("", `Deleted “${v.slice(2)}”. The current settings stay as they are.`);
+});
+/* Vary: move each sound setting by up to ±8 % of its range and pick a new seed. Layers that are off stay off. */
+const VARY = ["sGrains", "sDrone", "sShimmer", "sFreeze", "sScan", "sSpray", "sSize", "sJitter", "sDensity", "sDrift", "sBright"];
+$("vary").addEventListener("click", () => {
+  const from = $("preset").selectedOptions[0];
+  for (const id of VARY) {
+    const el = $(id), lo = +el.min, hi = +el.max;
+    if (["sGrains", "sDrone", "sShimmer", "sFreeze"].includes(id) && +el.value === 0) continue;
+    setCtl(id, Math.round(clamp(+el.value + (Math.random() * 2 - 1) * (hi - lo) * 0.08, lo, hi)));
+  }
+  setSeed(1 + Math.floor(Math.random() * 99999));
+  renderPresetMenu("", `A variation${from && from.value ? " of " + from.textContent : ""} with seed ${seedVal()}. Save it to keep it.`);
+});
+
 /* ---------- help window ---------- */
 const helpDlg = $("help");
 const helpBody = helpDlg.querySelector(".help-body");
@@ -1934,6 +2074,7 @@ helpDlg.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", (
 $("oLen").textContent = fmt($("sLen").value * 30);
 readTokens(); readParams(); updateSelText(); computePeaks();
 updateSlotKey(slots[0]); renderSlots(); updateKeyText(); applyIR(); updateExportInfo();
+renderPresetMenu("", "Default settings. Pick a preset as a starting point.");
 const mq = matchMedia("(prefers-color-scheme: dark)");
 (mq.addEventListener ? mq.addEventListener("change", readTokens) : null);
 new MutationObserver(readTokens).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
