@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Ambient Soundscape Generator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a listening room. Wide stage (grain map) on the left with the source tape under it; mixing desk + takes on the right. */
+:root {
+  --bg: #e6ebee;
+  --surface: #f5f7f8;
+  --ink: #18242c;
+  --muted: #5b6b75;
+  --line: #c9d3d9;
+  --accent: #23657c;
+  --accent-ink: #f2f7f9;
+  --warm: #b5762f;
+  --rec: #c2412f;
+  --stage: #dfe6ea;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1519; --surface: #151f25; --ink: #dbe4e9; --muted: #8a9ba5; --line: #263540;
+    --accent: #79b6cb; --accent-ink: #0b1418; --warm: #e0a45c; --rec: #ef6a55; --stage: #0a1014;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1519; --surface: #151f25; --ink: #dbe4e9; --muted: #8a9ba5; --line: #263540;
+  --accent: #79b6cb; --accent-ink: #0b1418; --warm: #e0a45c; --rec: #ef6a55; --stage: #0a1014;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 28px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 4.4vw, 44px); line-height: 1.02; letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--accent); font-weight: 400; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.vol { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.vol input { width: 140px; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+@media (max-width: 920px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: grid; gap: 20px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.panel h2 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 0; display: flex; align-items: baseline; gap: 10px; }
+.step { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.hint { color: var(--muted); font-size: 13px; margin: 0; }
+.stage { position: relative; background: var(--stage); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 8; max-width: 100%; min-height: 260px; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stage-top { position: absolute; left: 14px; right: 14px; top: 12px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); pointer-events: none; }
+.state { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.running .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
+.idle-msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--muted); font-size: 14px; }
+.idle-msg strong { display: block; font-family: var(--display); font-size: 22px; color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+.drop { border: 1.5px dashed var(--line); border-radius: 8px; padding: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; transition: border-color .15s, background .15s; }
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drop .name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.drop .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.drop .grow { flex: 1 1 200px; min-width: 0; }
+.wave { position: relative; height: 120px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); cursor: crosshair; touch-action: none; }
+.wave canvas { width: 100%; height: 100%; display: block; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.readout { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+button { font: 500 14px/1 var(--body); border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 10px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.big { font-size: 16px; padding: 14px 22px; letter-spacing: 0.02em; }
+button.rec.on { background: var(--rec); border-color: var(--rec); color: #fff; }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); }
+button.rec.on .rec-dot { background: #fff; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.sliders { display: grid; gap: 12px; }
+.slider { display: grid; grid-template-columns: 92px minmax(0,1fr) 44px; align-items: center; gap: 10px; font-size: 13px; }
+.slider output { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.group-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+input[type=range] { accent-color: var(--accent); width: 100%; min-width: 0; }
+input[type=text] { font: 14px var(--body); padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); width: 100%; min-width: 0; }
+.takes { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.take { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.take .t-name { font-weight: 500; overflow-wrap: anywhere; }
+.take .readout { display: block; }
+.take .btns { display: flex; gap: 6px; }
+.take button { padding: 7px 10px; font-size: 13px; }
+.empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+.err { color: var(--rec); font-size: 13px; margin: 0; }
+footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
+footer a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { button.rec.on .rec-dot { animation: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Ambient Soundscape <span>Generator</span></h1>
+      <p class="lede">Give it a jingle, a sound or a piece of music. Capture a few seconds as its essence, and it grows an endless, slowly shifting soundscape from that fragment.</p>
+    </div>
+    <label class="vol" for="vol">VOLUME <input id="vol" type="range" min="0" max="100" value="80"></label>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <div class="stage" id="stage">
+        <canvas id="viz"></canvas>
+        <div class="stage-top"><span class="state" id="state"><span class="dot"></span><span id="stateText">Silent</span></span><span id="sceneText"></span></div>
+        <div class="idle-msg" id="idle"><div><strong>Press Start to grow a soundscape</strong><span id="idleSub">from the 3.0 s essence of the example chime.</span></div></div>
+      </div>
+
+      <section class="panel" aria-labelledby="h-src">
+        <h2 id="h-src"><span class="step">Step 1–2</span> Source and essence</h2>
+        <div class="drop" id="drop">
+          <div class="grow">
+            <div class="name" id="srcName">Example: chime motif</div>
+            <div class="meta" id="srcMeta">generated in the page · 6.0 s · mono</div>
+          </div>
+          <input type="file" id="file" accept="audio/*,.mp3,.wav,.aif,.aiff,.flac" hidden>
+          <button id="pick" type="button">Choose audio file</button>
+        </div>
+        <p class="hint">Drop an .mp3, .wav, .aif, .aiff or .flac file here. Then play it and press Capture to start and stop the part you want, or drag across the waveform. About 3 seconds works well.</p>
+        <p class="err" id="srcErr" hidden></p>
+        <div class="wave" id="wave"><canvas id="waveCv"></canvas></div>
+        <div class="row">
+          <button id="playSrc" type="button">▶ Play source</button>
+          <button id="capture" class="rec" type="button"><span class="rec-dot"></span><span id="capLabel">Capture essence</span></button>
+          <span class="readout" id="selText">Essence 0.00–3.00 s · 3.00 s</span>
+        </div>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel" aria-labelledby="h-gen">
+        <h2 id="h-gen"><span class="step">Step 3</span> Soundscape</h2>
+        <button id="start" class="primary big" type="button">START</button>
+        <div class="sliders">
+          <div class="group-label">Layers</div>
+          <label class="slider" for="sGrains">Grain cloud <input id="sGrains" type="range" min="0" max="100" value="70"><output id="oGrains">70</output></label>
+          <label class="slider" for="sDrone">Slow drone <input id="sDrone" type="range" min="0" max="100" value="55"><output id="oDrone">55</output></label>
+          <label class="slider" for="sShimmer">Shimmer <input id="sShimmer" type="range" min="0" max="100" value="40"><output id="oShimmer">40</output></label>
+          <div class="group-label">Character</div>
+          <label class="slider" for="sDensity">Density <input id="sDensity" type="range" min="1" max="30" value="9"><output id="oDensity">9/s</output></label>
+          <label class="slider" for="sSpace">Space <input id="sSpace" type="range" min="0" max="100" value="65"><output id="oSpace">65</output></label>
+          <label class="slider" for="sDrift">Drift <input id="sDrift" type="range" min="0" max="100" value="50"><output id="oDrift">50</output></label>
+          <label class="slider" for="sBright">Brightness <input id="sBright" type="range" min="0" max="100" value="60"><output id="oBright">60</output></label>
+        </div>
+        <p class="hint">Drift sets how often the soundscape moves to a new key and texture. Changes to the essence are picked up while it plays.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="h-takes">
+        <h2 id="h-takes">Save the results</h2>
+        <label for="takeName" class="hint">Name for the next take</label>
+        <input id="takeName" type="text" value="soundscape-1">
+        <button id="recTake" class="rec" type="button" disabled><span class="rec-dot"></span><span id="recLabel">Record take</span></button>
+        <p class="hint" id="takeHint">Click once to start recording the output, again to finish. Start the soundscape first.</p>
+        <ul class="takes" id="takes"><li class="empty">No takes yet.</li></ul>
+      </section>
+    </div>
+  </div>
+
+  <footer>A browser rebuild of the <a href="https://github.com/dmpavlou/Ambient-Soundscape-Generator" target="_blank" rel="noopener">Ambient Soundscape Generator</a> by Dimitra Maria Pavlou, built with the Web Audio API. Nothing you load leaves your browser.</footer>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+
+/* ---------- source: { channels: Float32Array[], sampleRate, name } ---------- */
+function makeExample() {
+  const sr = 44100, len = sr * 6, d = new Float32Array(len);
+  const notes = [[0, 587.33], [0.45, 440], [0.9, 493.88], [1.35, 739.99], [2.1, 659.25], [3.1, 880], [3.55, 739.99], [4.0, 587.33], [4.7, 493.88]];
+  const parts = [[1, 1, 1.8], [2.76, 0.35, 0.9], [5.4, 0.16, 0.45], [8.93, 0.06, 0.2]];
+  for (const [t0, f] of notes) {
+    const s0 = Math.floor(t0 * sr);
+    for (let i = 0; i < sr * 2.4 && s0 + i < len; i++) {
+      const t = i / sr; let v = 0;
+      for (const [m, a, dec] of parts) v += a * Math.sin(2 * Math.PI * f * m * t) * Math.exp(-t / dec);
+      d[s0 + i] += v * Math.min(1, t * 400) * 0.22;
+    }
+  }
+  for (let i = 0; i < len; i++) {
+    const t = i / sr, sw = Math.sin(Math.PI * t / 6);
+    d[i] += 0.05 * sw * (Math.sin(2 * Math.PI * 146.83 * t) + 0.7 * Math.sin(2 * Math.PI * 220 * t + 0.4));
+  }
+  let pk = 0; for (const v of d) pk = Math.max(pk, Math.abs(v));
+  for (let i = 0; i < len; i++) d[i] *= 0.85 / pk;
+  return { channels: [d], sampleRate: sr, name: "example chime" };
+}
+let source = makeExample();
+let sel = [0, 3];
+const srcDur = () => source.channels[0].length / source.sampleRate;
+
+/* ---------- audio graph ---------- */
+let ctx = null, G = null;
+function ensureCtx() {
+  if (ctx) return ctx;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const out = ctx.createGain(); out.gain.value = vol();
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 3; comp.knee.value = 12;
+  const tone = ctx.createBiquadFilter(); tone.type = "lowpass"; tone.Q.value = 0.4;
+  const master = ctx.createGain(); master.gain.value = 0;
+  const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.85;
+  const recDest = ctx.createMediaStreamDestination ? ctx.createMediaStreamDestination() : null;
+  const verb = ctx.createConvolver(); verb.buffer = makeIR(ctx, 6);
+  const verbIn = ctx.createGain(), verbOut = ctx.createGain();
+  const delay = ctx.createDelay(2); delay.delayTime.value = 0.62;
+  const fb = ctx.createGain(); fb.gain.value = 0.42;
+  const dlp = ctx.createBiquadFilter(); dlp.type = "lowpass"; dlp.frequency.value = 2600;
+  const delayIn = ctx.createGain(); delayIn.gain.value = 0.35;
+  verbIn.connect(verb); verb.connect(verbOut); verbOut.connect(master);
+  delayIn.connect(delay); delay.connect(dlp); dlp.connect(fb); fb.connect(delay); dlp.connect(verbIn); dlp.connect(master);
+  master.connect(tone); tone.connect(comp); comp.connect(out); out.connect(analyser); analyser.connect(ctx.destination);
+  if (recDest) out.connect(recDest);
+  const bus = name => {
+    const g = ctx.createGain(), send = ctx.createGain(), dsend = ctx.createGain();
+    g.connect(master); g.connect(send); send.connect(verbIn); g.connect(dsend); dsend.connect(delayIn);
+    return { g, send, dsend, name };
+  };
+  G = { out, comp, tone, master, analyser, recDest, verbOut, grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer") };
+  G.drone.dsend.gain.value = 0;
+  applyParams();
+  return ctx;
+}
+function makeIR(c, secs) {
+  const len = Math.floor(c.sampleRate * secs), b = c.createBuffer(2, len, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch); let lp = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / c.sampleRate;
+      lp += 0.35 * ((Math.random() * 2 - 1) - lp);
+      d[i] = lp * Math.exp(-t * 1.15) * Math.min(1, t * 60);
+    }
+  }
+  return b;
+}
+const vol = () => Math.pow($("vol").value / 100, 2) * 1.1;
+
+/* essence buffers, rebuilt whenever the selection changes */
+let ess = null; // {fwd, rev, loop, dur}
+function buildEssence() {
+  if (!ctx) return;
+  const sr = source.sampleRate, a = Math.floor(sel[0] * sr), b = Math.max(a + Math.floor(0.08 * sr), Math.floor(sel[1] * sr));
+  const nCh = Math.min(2, source.channels.length), n = b - a;
+  const fwd = ctx.createBuffer(nCh, n, sr), rev = ctx.createBuffer(nCh, n, sr);
+  const xf = Math.min(Math.floor(n * 0.35), Math.floor(sr * 0.8)), loopN = n - xf;
+  const loop = ctx.createBuffer(nCh, Math.max(1, loopN), sr);
+  for (let ch = 0; ch < nCh; ch++) {
+    const s = source.channels[ch].subarray(a, b), f = fwd.getChannelData(ch), r = rev.getChannelData(ch), l = loop.getChannelData(ch);
+    f.set(s);
+    for (let i = 0; i < n; i++) r[i] = s[n - 1 - i];
+    for (let i = 0; i < loopN; i++) {
+      if (i < xf) { const p = i / xf; l[i] = s[i] * Math.sin(p * Math.PI / 2) + s[loopN + i] * Math.cos(p * Math.PI / 2); }
+      else l[i] = s[i];
+    }
+  }
+  ess = { fwd, rev, loop, dur: n / sr };
+}
+
+/* ---------- parameters ---------- */
+const P = {};
+function readParams() {
+  P.grains = $("sGrains").value / 100; P.drone = $("sDrone").value / 100; P.shimmer = $("sShimmer").value / 100;
+  P.density = +$("sDensity").value; P.space = $("sSpace").value / 100; P.drift = $("sDrift").value / 100; P.bright = $("sBright").value / 100;
+}
+function applyParams() {
+  readParams();
+  if (!G) return;
+  const t = ctx.currentTime, tc = 0.15;
+  G.grains.g.gain.setTargetAtTime(P.grains * 0.9, t, tc);
+  G.drone.g.gain.setTargetAtTime(P.drone * 0.55, t, tc);
+  G.shimmer.g.gain.setTargetAtTime(P.shimmer * 0.7, t, tc);
+  for (const b of [G.grains, G.drone, G.shimmer]) b.send.gain.setTargetAtTime(P.space * 1.1, t, tc);
+  G.grains.dsend.gain.setTargetAtTime(P.space * 0.5, t, tc);
+  G.shimmer.dsend.gain.setTargetAtTime(P.space * 0.7, t, tc);
+  G.verbOut.gain.setTargetAtTime(0.4 + P.space * 0.8, t, tc);
+  G.tone.frequency.setTargetAtTime(900 * Math.pow(20, P.bright), t, tc);
+  G.out.gain.setTargetAtTime(vol(), t, 0.05);
+}
+const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v + "/s", Space: v => v, Drift: v => v, Bright: v => v };
+for (const k of Object.keys(outs)) $("s" + k).addEventListener("input", e => { $("o" + k).textContent = outs[k](e.target.value); applyParams(); });
+$("vol").addEventListener("input", applyParams);
+
+/* ---------- generative engine ---------- */
+const ROOTS = [1, 0.8909, 0.7492, 0.6674, 1.1225, 1.3348, 0.8409];
+const SETS = [
+  { name: "open fifths", r: [1, 1.5, 2, 0.5] },
+  { name: "major colour", r: [1, 1.2599, 1.4983, 2] },
+  { name: "suspended", r: [1, 1.3348, 0.75, 2] },
+  { name: "lydian haze", r: [1, 1.1225, 1.4983, 1.4142, 2] },
+  { name: "minor dusk", r: [1, 1.1892, 1.4983, 0.5] }
+];
+let running = false, sched = null, sceneTimer = null, shimmerTimer = null, nextGrain = 0;
+const scene = { n: 1, root: 1, set: SETS[0], densMul: 1 };
+let droneNodes = [];
+const particles = [];
+
+function scheduleGrains() {
+  const ahead = ctx.currentTime + 0.12;
+  if (nextGrain < ctx.currentTime) nextGrain = ctx.currentTime + 0.01;
+  while (nextGrain < ahead) {
+    if (P.grains > 0.001 && ess) playGrain(nextGrain);
+    const rate = Math.max(0.5, P.density * scene.densMul * (0.75 + 0.5 * Math.sin(ctx.currentTime / 7)));
+    nextGrain += -Math.log(1 - Math.random()) / rate;
+  }
+}
+function playGrain(t) {
+  const ratio = scene.root * pick(scene.set.r) * (1 + rand(-0.004, 0.004));
+  const maxDur = clamp(1.4 / Math.sqrt(P.density), 0.12, 0.7);
+  let dur = rand(0.06, maxDur);
+  const span = ess.dur;
+  dur = Math.min(dur, span / ratio * 0.95);
+  const off = rand(0, Math.max(0, span - dur * ratio));
+  const src = ctx.createBufferSource(); src.buffer = ess.fwd; src.playbackRate.value = ratio;
+  const g = ctx.createGain(), amp = clamp(0.5 / Math.sqrt(P.density * dur * 3), 0.08, 0.45);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(amp, t + dur * 0.4); g.gain.linearRampToValueAtTime(0, t + dur);
+  const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+  src.connect(g);
+  if (pan) { pan.pan.value = rand(-0.85, 0.85); g.connect(pan); pan.connect(G.grains.g); } else g.connect(G.grains.g);
+  src.start(t, off, dur * ratio + 0.01); src.stop(t + dur + 0.05);
+  const delayMs = Math.max(0, (t - ctx.currentTime) * 1000);
+  setTimeout(() => particles.push({ kind: "g", x: (off + dur * ratio / 2) / span, ratio, r: dur, born: performance.now(), life: 900 + dur * 2200 }), delayMs);
+}
+function startDrone(fadeIn = 4) {
+  const t = ctx.currentTime;
+  for (const [mult, lvl, cut] of [[0.5, 0.8, 900], [0.25, 0.6, 500]]) {
+    const src = ctx.createBufferSource(); src.buffer = ess.loop; src.loop = true;
+    src.playbackRate.value = scene.root * mult;
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cut; lp.Q.value = 2;
+    const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = rand(0.02, 0.05); lfoG.gain.value = cut * 0.7;
+    lfo.connect(lfoG); lfoG.connect(lp.frequency);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(lvl, t + fadeIn);
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    src.connect(lp); lp.connect(g);
+    if (pan) { pan.pan.value = mult === 0.5 ? -0.35 : 0.35; g.connect(pan); pan.connect(G.drone.g); } else g.connect(G.drone.g);
+    src.start(t, rand(0, ess.loop.duration)); lfo.start(t);
+    droneNodes.push({ src, g, lfo, mult, lp, cut });
+  }
+}
+function stopDrone(fade = 3) {
+  const t = ctx.currentTime;
+  for (const n of droneNodes) {
+    n.g.gain.cancelScheduledValues(t); n.g.gain.setValueAtTime(n.g.gain.value, t); n.g.gain.linearRampToValueAtTime(0, t + fade);
+    n.src.stop(t + fade + 0.1); n.lfo.stop(t + fade + 0.1);
+  }
+  droneNodes = [];
+}
+function shimmerEvent() {
+  if (!running) return;
+  if (P.shimmer > 0.001 && ess) {
+    const t = ctx.currentTime + 0.05, ratio = scene.root * pick([2, 1.5, 2, 3]);
+    const len = Math.min(ess.dur, rand(0.6, 1.8));
+    const src = ctx.createBufferSource(); src.buffer = ess.rev; src.playbackRate.value = ratio;
+    const off = rand(0, Math.max(0, ess.dur - len));
+    const play = len / ratio + 2.5;
+    src.loop = true; src.loopStart = off; src.loopEnd = off + len;
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 700;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.35, t + play * 0.45); g.gain.linearRampToValueAtTime(0, t + play);
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    src.connect(hp); hp.connect(g);
+    if (pan) { pan.pan.value = rand(-1, 1); g.connect(pan); pan.connect(G.shimmer.g); } else g.connect(G.shimmer.g);
+    src.start(t, off); src.stop(t + play + 0.1);
+    particles.push({ kind: "s", x: (off + len / 2) / ess.dur, ratio, r: len, born: performance.now(), life: play * 1000 });
+  }
+  shimmerTimer = setTimeout(shimmerEvent, rand(2500, 7000) / (0.4 + P.shimmer));
+}
+function newScene() {
+  if (!running) return;
+  if (P.drift > 0.02) {
+    scene.n++;
+    scene.root = Math.random() < 0.3 ? 1 : pick(ROOTS.filter(r => r !== scene.root));
+    scene.set = pick(SETS.filter(s => s !== scene.set));
+    scene.densMul = rand(0.55, 1.45);
+    const t = ctx.currentTime, glide = 6 + (1 - P.drift) * 6;
+    for (const n of droneNodes) {
+      n.src.playbackRate.cancelScheduledValues(t);
+      n.src.playbackRate.setValueAtTime(n.src.playbackRate.value, t);
+      n.src.playbackRate.linearRampToValueAtTime(scene.root * n.mult, t + glide);
+      n.lp.frequency.setTargetAtTime(n.cut * rand(0.6, 1.8), t, glide / 2);
+    }
+    updateScene();
+  }
+  sceneTimer = setTimeout(newScene, (34 - P.drift * 24) * 1000 * rand(0.8, 1.2));
+}
+function updateScene() {
+  const st = Math.round(12 * Math.log2(scene.root));
+  $("sceneText").textContent = running ? `Scene ${scene.n} · ${scene.set.name} · root ${st >= 0 ? "+" : ""}${st} st` : "";
+}
+
+async function start() {
+  ensureCtx(); await ctx.resume();
+  buildEssence();
+  running = true;
+  scene.n = 1; scene.root = 1; scene.set = SETS[0]; scene.densMul = 1;
+  const t = ctx.currentTime;
+  G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(1, t + 2.5);
+  nextGrain = t + 0.05;
+  startDrone();
+  sched = setInterval(scheduleGrains, 25);
+  shimmerTimer = setTimeout(shimmerEvent, 1500);
+  sceneTimer = setTimeout(newScene, (34 - P.drift * 24) * 1000);
+  updateUI();
+}
+function stop() {
+  running = false;
+  clearInterval(sched); clearTimeout(shimmerTimer); clearTimeout(sceneTimer);
+  const t = ctx.currentTime;
+  G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(0, t + 1.5);
+  stopDrone(1.5);
+  if (recorder) stopTake();
+  updateUI();
+}
+$("start").addEventListener("click", () => running ? stop() : start());
+
+function essenceChanged() {
+  updateSelText();
+  if (running && ctx) { buildEssence(); stopDrone(3); startDrone(3); }
+  $("idleSub").textContent = `from the ${(sel[1] - sel[0]).toFixed(1)} s essence of ${source.name === "example chime" ? "the example chime" : "“" + source.name + "”"}.`;
+}
+
+/* ---------- UI state ---------- */
+function updateUI() {
+  $("start").textContent = running ? "STOP" : "START";
+  $("stage").classList.toggle("running", running);
+  $("stateText").textContent = running ? "Playing" : "Silent";
+  $("idle").hidden = running;
+  $("recTake").disabled = !running || !G?.recDest || typeof MediaRecorder === "undefined";
+  updateScene();
+}
+function fmt(s) { const m = Math.floor(s / 60); return m + ":" + String(Math.floor(s % 60)).padStart(2, "0"); }
+function updateSelText() {
+  $("selText").textContent = `Essence ${sel[0].toFixed(2)}–${sel[1].toFixed(2)} s · ${(sel[1] - sel[0]).toFixed(2)} s`;
+}
+
+/* ---------- loading files ---------- */
+function bestWindow(ch, sr, win) {
+  const n = ch.length, w = Math.floor(win * sr);
+  if (n <= w) return [0, n / sr];
+  const hop = Math.floor(sr / 10); let best = 0, bestE = -1;
+  for (let s = 0; s + w <= n; s += hop) {
+    let e = 0; for (let i = s; i < s + w; i += 64) e += ch[i] * ch[i];
+    if (e > bestE) { bestE = e; best = s; }
+  }
+  return [best / sr, (best + w) / sr];
+}
+async function loadFile(file) {
+  $("srcErr").hidden = true;
+  if (!file) return;
+  stopPreview();
+  try {
+    ensureCtx();
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
+    const channels = []; for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) channels.push(buf.getChannelData(c).slice());
+    source = { channels, sampleRate: buf.sampleRate, name: file.name.replace(/\.[^.]+$/, "") };
+    sel = bestWindow(channels[0], buf.sampleRate, 3).map(v => Math.round(v * 100) / 100);
+    $("srcName").textContent = file.name;
+    $("srcMeta").textContent = `${buf.duration.toFixed(1)} s · ${buf.numberOfChannels > 1 ? "stereo" : "mono"} · ${(buf.sampleRate / 1000).toFixed(1)} kHz · loudest 3 s pre-selected`;
+    $("takeName").value = source.name + "-soundscape";
+    computePeaks(); drawWave(); essenceChanged();
+  } catch (e) {
+    $("srcErr").textContent = `This browser couldn't decode “${file.name}”. Try a WAV or MP3 version of it.`;
+    $("srcErr").hidden = false;
+  }
+}
+$("pick").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", e => loadFile(e.target.files[0]));
+const drop = $("drop");
+for (const ev of ["dragenter", "dragover"]) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); });
+for (const ev of ["dragleave", "drop"]) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); });
+drop.addEventListener("drop", e => loadFile(e.dataTransfer.files[0]));
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => { e.preventDefault(); if (!drop.contains(e.target)) loadFile(e.dataTransfer.files[0]); });
+
+/* ---------- waveform, preview and capture ---------- */
+const waveCv = $("waveCv"); let peaks = null;
+function computePeaks() {
+  const W = 1200, ch = source.channels[0], step = ch.length / W; peaks = new Float32Array(W);
+  for (let x = 0; x < W; x++) { let m = 0; const a = Math.floor(x * step), b = Math.floor((x + 1) * step); for (let i = a; i < b; i++) m = Math.max(m, Math.abs(ch[i])); peaks[x] = m; }
+}
+let tok = {};
+function readTokens() { const cs = getComputedStyle(document.documentElement); for (const k of ["ink", "muted", "line", "accent", "warm", "rec", "stage", "bg"]) tok[k] = cs.getPropertyValue("--" + k).trim(); }
+function sizeCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  return [w, h, dpr];
+}
+let preview = null, capStart = null;
+function previewPos() { return preview ? Math.min(srcDur(), preview.off + (ctx.currentTime - preview.t0)) : null; }
+function drawWave() {
+  if (!peaks) computePeaks();
+  const [w, h, dpr] = sizeCanvas(waveCv), g = waveCv.getContext("2d"), dur = srcDur();
+  g.clearRect(0, 0, w, h);
+  const x0 = sel[0] / dur * w, x1 = sel[1] / dur * w;
+  g.fillStyle = tok.accent; g.globalAlpha = 0.16; g.fillRect(x0, 0, x1 - x0, h); g.globalAlpha = 1;
+  const mid = h / 2;
+  for (let x = 0; x < w; x++) {
+    const p = peaks[Math.floor(x / w * peaks.length)] * (h * 0.46);
+    g.fillStyle = (x >= x0 && x <= x1) ? tok.accent : tok.muted;
+    g.fillRect(x, mid - p, 1, Math.max(1, p * 2));
+  }
+  g.fillStyle = tok.accent; g.fillRect(x0, 0, 2 * dpr, h); g.fillRect(x1 - 2 * dpr, 0, 2 * dpr, h);
+  const pos = previewPos();
+  if (capStart != null && pos != null) {
+    const a = capStart / dur * w, b = pos / dur * w;
+    g.fillStyle = tok.rec; g.globalAlpha = 0.22; g.fillRect(a, 0, b - a, h); g.globalAlpha = 1;
+  }
+  if (pos != null) { g.fillStyle = tok.ink; g.fillRect(pos / dur * w, 0, 1.5 * dpr, h); }
+  g.fillStyle = tok.muted; g.font = `${11 * dpr}px "IBM Plex Mono", monospace`; g.textBaseline = "top";
+  for (let s = 0; s <= dur; s += dur > 60 ? 10 : dur > 20 ? 5 : 1) { const x = s / dur * w; g.fillRect(x, h - 4 * dpr, 1, 4 * dpr); if (s > 0 && x < w - 30 * dpr) g.fillText(s + "s", x + 3 * dpr, h - 15 * dpr); }
+}
+async function startPreview() {
+  ensureCtx(); await ctx.resume();
+  const sr = source.sampleRate, b = ctx.createBuffer(source.channels.length, source.channels[0].length, sr);
+  source.channels.forEach((c, i) => b.copyToChannel(c, i));
+  const s = ctx.createBufferSource(); s.buffer = b;
+  const g = ctx.createGain(); s.connect(g); g.gain.value = 0.9; g.connect(G.out);
+  s.start(); preview = { s, t0: ctx.currentTime, off: 0 };
+  s.onended = () => { if (preview && preview.s === s) { if (capStart != null) endCapture(); preview = null; $("playSrc").textContent = "▶ Play source"; } };
+  $("playSrc").textContent = "■ Stop source";
+}
+function stopPreview() { if (preview) { const p = preview; preview = null; try { p.s.stop(); } catch (e) {} } capStart = null; setCapUI(); $("playSrc").textContent = "▶ Play source"; }
+$("playSrc").addEventListener("click", () => preview ? stopPreview() : startPreview());
+function setCapUI() { $("capture").classList.toggle("on", capStart != null); $("capLabel").textContent = capStart != null ? "Stop capture" : "Capture essence"; }
+function endCapture() {
+  const pos = previewPos() ?? srcDur();
+  if (pos - capStart >= 0.1) { sel = [Math.round(capStart * 100) / 100, Math.round(pos * 100) / 100]; essenceChanged(); }
+  capStart = null; setCapUI();
+}
+$("capture").addEventListener("click", async () => {
+  if (capStart != null) return endCapture();
+  if (!preview) await startPreview();
+  capStart = previewPos(); setCapUI();
+});
+let dragging = null;
+const wave = $("wave");
+function xToTime(e) { const r = wave.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width, 0, 1) * srcDur(); }
+wave.addEventListener("pointerdown", e => { wave.setPointerCapture(e.pointerId); dragging = xToTime(e); });
+wave.addEventListener("pointermove", e => { if (dragging == null) return; const t = xToTime(e); if (Math.abs(t - dragging) > 0.05) { sel = [Math.min(t, dragging), Math.max(t, dragging)].map(v => Math.round(v * 100) / 100); updateSelText(); } });
+wave.addEventListener("pointerup", () => { if (dragging != null) { dragging = null; essenceChanged(); } });
+
+/* ---------- visualizer: grain map ---------- */
+const viz = $("viz"); let freq = null;
+const yForRatio = (r, h) => { const l = clamp(Math.log2(r), -2, 2); return h * (0.5 - l / 4.6); };
+function drawViz() {
+  const [w, h, dpr] = sizeCanvas(viz), g = viz.getContext("2d"), now = performance.now();
+  g.clearRect(0, 0, w, h);
+  const padL = 46 * dpr, padB = 26 * dpr, iw = w - padL - 12 * dpr, ih = h - padB - 34 * dpr, top = 34 * dpr;
+  g.font = `${10.5 * dpr}px "IBM Plex Mono", monospace`; g.textBaseline = "middle";
+  for (const [r, lab] of [[0.25, "×¼"], [0.5, "×½"], [1, "×1"], [2, "×2"], [4, "×4"]]) {
+    const y = top + yForRatio(r, ih);
+    g.strokeStyle = tok.line; g.lineWidth = 1; g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + iw, y); g.stroke();
+    g.fillStyle = tok.muted; g.fillText(lab, 10 * dpr, y);
+  }
+  g.textBaseline = "alphabetic"; g.fillStyle = tok.muted;
+  g.fillText("pitch", 10 * dpr, top - 10 * dpr);
+  g.fillText("start of essence", padL, h - 8 * dpr);
+  const endLab = "end"; g.fillText(endLab, padL + iw - g.measureText(endLab).width, h - 8 * dpr);
+  if (G && (running || G.master.gain.value > 0.01)) {
+    if (!freq) freq = new Uint8Array(G.analyser.frequencyBinCount);
+    G.analyser.getByteFrequencyData(freq);
+    g.beginPath(); g.moveTo(padL, top + ih);
+    const bins = 220;
+    for (let i = 0; i <= bins; i++) { const v = freq[Math.floor(Math.pow(i / bins, 2) * (freq.length * 0.6))] / 255; g.lineTo(padL + i / bins * iw, top + ih - v * ih * 0.55); }
+    g.lineTo(padL + iw, top + ih); g.closePath();
+    g.fillStyle = tok.accent; g.globalAlpha = 0.12; g.fill(); g.globalAlpha = 1;
+    for (const n of droneNodes) {
+      const y = top + yForRatio(n.src.playbackRate.value, ih);
+      const grd = g.createLinearGradient(0, y - 14 * dpr, 0, y + 14 * dpr);
+      grd.addColorStop(0, "transparent"); grd.addColorStop(0.5, tok.warm); grd.addColorStop(1, "transparent");
+      g.globalAlpha = 0.35 * (P.drone + 0.1); g.fillStyle = grd; g.fillRect(padL, y - 14 * dpr, iw, 28 * dpr); g.globalAlpha = 1;
+    }
+  }
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i], age = (now - p.born) / p.life;
+    if (age >= 1) { particles.splice(i, 1); continue; }
+    const x = padL + clamp(p.x, 0, 1) * iw, y = top + yForRatio(p.ratio, ih);
+    const a = age < 0.15 ? age / 0.15 : 1 - (age - 0.15) / 0.85;
+    g.globalAlpha = a * (p.kind === "s" ? 0.5 : 0.75);
+    g.fillStyle = p.kind === "s" ? tok.warm : tok.accent;
+    g.beginPath(); g.arc(x, y, (p.kind === "s" ? 10 + p.r * 18 : 2.5 + p.r * 16) * dpr * (0.6 + age * 0.6), 0, Math.PI * 2); g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
+/* ---------- takes ---------- */
+let recorder = null, recChunks = [], recT0 = 0, recTick = null, takeCount = 0, downloads = null;
+const takes = [];
+const mime = typeof MediaRecorder !== "undefined" ? ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => MediaRecorder.isTypeSupported(m)) : null;
+const ext = mime && mime.includes("mp4") ? "mp4" : "webm";
+function startTake() {
+  recChunks = [];
+  recorder = new MediaRecorder(G.recDest.stream, mime ? { mimeType: mime } : undefined);
+  const name = ($("takeName").value.trim() || "soundscape").replace(/[\\/:*?"<>|]+/g, "-");
+  recorder.ondataavailable = e => e.data.size && recChunks.push(e.data);
+  recorder.onstop = () => {
+    const blob = new Blob(recChunks, { type: recorder?.mimeType || mime || "audio/webm" });
+    takes.unshift({ name, blob, secs: (performance.now() - recT0) / 1000 });
+    renderTakes();
+    const m = $("takeName").value.match(/^(.*?)(\d+)$/);
+    $("takeName").value = m ? m[1] + (+m[2] + 1) : $("takeName").value + "-2";
+  };
+  recorder.start(500); recT0 = performance.now();
+  $("recTake").classList.add("on");
+  recTick = setInterval(() => $("recLabel").textContent = `Stop take · ${fmt((performance.now() - recT0) / 1000)}`, 250);
+  $("recLabel").textContent = "Stop take · 0:00";
+}
+function stopTake() {
+  clearInterval(recTick);
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  recorder = null;
+  $("recTake").classList.remove("on"); $("recLabel").textContent = "Record take";
+}
+$("recTake").addEventListener("click", () => recorder ? stopTake() : startTake());
+let takePlayer = null;
+async function playTake(i, btn) {
+  if (takePlayer) { const p = takePlayer; takePlayer = null; try { p.s.stop(); } catch (e) {} if (p.i === i) return; }
+  ensureCtx(); await ctx.resume();
+  try {
+    const buf = await ctx.decodeAudioData(await takes[i].blob.arrayBuffer());
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); s.start();
+    takePlayer = { s, i }; btn.textContent = "■";
+    s.onended = () => { btn.textContent = "▶"; if (takePlayer && takePlayer.s === s) takePlayer = null; };
+  } catch (e) { btn.textContent = "—"; btn.title = "This browser can't play the recording back"; }
+}
+async function saveTake(i, btn) {
+  const t = takes[i];
+  try { await downloads.save({ filename: `${t.name}.${ext}`, data: t.blob }); btn.textContent = "Saved"; }
+  catch (e) { btn.textContent = e && e.code === "declined" ? "Save" : "Not saved"; }
+}
+function renderTakes() {
+  const ul = $("takes"); ul.textContent = "";
+  if (!takes.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "No takes yet."; ul.append(li); return; }
+  takes.forEach((t, i) => {
+    const li = document.createElement("li"); li.className = "take";
+    const info = document.createElement("div");
+    const nm = document.createElement("div"); nm.className = "t-name"; nm.textContent = `${t.name}.${ext}`;
+    const rd = document.createElement("span"); rd.className = "readout"; rd.textContent = `${fmt(t.secs)} · ${(t.blob.size / 1024).toFixed(0)} KB`;
+    info.append(nm, rd);
+    const btns = document.createElement("div"); btns.className = "btns";
+    const pb = document.createElement("button"); pb.type = "button"; pb.textContent = "▶"; pb.setAttribute("aria-label", "Play take"); pb.onclick = () => playTake(i, pb);
+    btns.append(pb);
+    if (downloads) { const sb = document.createElement("button"); sb.type = "button"; sb.textContent = "Save"; sb.onclick = () => saveTake(i, sb); btns.append(sb); }
+    li.append(info, btns); ul.append(li);
+  });
+}
+
+/* ---------- boot ---------- */
+readTokens(); readParams(); updateSelText(); computePeaks();
+const mq = matchMedia("(prefers-color-scheme: dark)");
+(mq.addEventListener ? mq.addEventListener("change", readTokens) : null);
+new MutationObserver(readTokens).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+function frame() { drawWave(); drawViz(); requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+if (typeof MediaRecorder === "undefined") $("takeHint").textContent = "This browser can't record audio output, so takes are unavailable here.";
+const noSave = () => { $("takeHint").textContent += " Saving files isn't available in this view, but you can still record and play takes back."; };
+(function hookDownloads(tries) {
+  if (window.claude?.use) {
+    window.claude.use("downloads").then(d => { downloads = d; if (!d) noSave(); renderTakes(); }, noSave);
+  } else if (tries > 0) setTimeout(() => hookDownloads(tries - 1), 200);
+  else {
+    // Plain web page (e.g. GitHub Pages): save with an ordinary download link.
+    downloads = { save: async ({ filename, data }) => {
+      const a = document.createElement("a"), url = URL.createObjectURL(data);
+      a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } };
+    renderTakes();
+  }
+})(15);
+})();
+</script>
+</body>
+</html>
