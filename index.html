@@ -838,7 +838,10 @@ function drawViz() {
       g.globalAlpha = 0.8; g.fillStyle = tok.muted; g.fillText("freeze", padL + iw - g.measureText("freeze").width, y - 8 * dpr); g.globalAlpha = 1;
     }
     if (running && ess) {
-      const x = padL + scan.pos * iw, sw = P.spray * iw;
+      // scan.pos is only stepped when grains are scheduled (up to 120 ms ahead, at random intervals),
+      // so draw the head from the audio clock: extrapolate from the last step to "now" for a smooth sweep.
+      const vpos = (((scan.pos + (ctx.currentTime - scan.t) * P.scan / ess.dur) % 1) + 1) % 1;
+      const x = padL + vpos * iw, sw = P.spray * iw;
       g.fillStyle = tok.ink; g.globalAlpha = 0.07;
       g.fillRect(Math.max(padL, x - sw / 2), top, Math.min(padL + iw, x + sw / 2) - Math.max(padL, x - sw / 2), ih);
       g.globalAlpha = 0.55; g.fillRect(x, top, 1.5 * dpr, ih); g.globalAlpha = 1;
