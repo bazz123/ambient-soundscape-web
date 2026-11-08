@@ -82,7 +82,7 @@ button.rec.on { background: var(--rec); border-color: var(--rec); color: #fff; }
 button.rec.on .rec-dot { background: #fff; animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .sliders { display: grid; gap: 12px; }
-.slider { display: grid; grid-template-columns: 92px minmax(0,1fr) 44px; align-items: center; gap: 10px; font-size: 13px; }
+.slider { display: grid; grid-template-columns: 96px minmax(0,1fr) 58px; align-items: center; gap: 10px; font-size: 13px; }
 .slider output { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 .group-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 input[type=range] { accent-color: var(--accent); width: 100%; min-width: 0; }
@@ -174,13 +174,25 @@ select { font: 12px var(--mono); padding: 4px 6px; border: 1px solid var(--line)
           <label class="slider" for="sGrains">Grain cloud <input id="sGrains" type="range" min="0" max="100" value="70"><output id="oGrains">70</output></label>
           <label class="slider" for="sDrone">Slow drone <input id="sDrone" type="range" min="0" max="100" value="55"><output id="oDrone">55</output></label>
           <label class="slider" for="sShimmer">Shimmer <input id="sShimmer" type="range" min="0" max="100" value="40"><output id="oShimmer">40</output></label>
-          <div class="group-label">Character</div>
+          <label class="slider" for="sFreeze">Freeze pad <input id="sFreeze" type="range" min="0" max="100" value="30"><output id="oFreeze">30</output></label>
+          <div class="row"><button id="refreeze" type="button" disabled>Refreeze at scan head</button></div>
+          <div class="group-label">Grain texture</div>
+          <label class="slider" for="sScan">Scan speed <input id="sScan" type="range" min="-100" max="100" value="15"><output id="oScan">0.15×</output></label>
+          <label class="slider" for="sSpray">Spray <input id="sSpray" type="range" min="0" max="100" value="20"><output id="oSpray">20%</output></label>
+          <label class="slider" for="sSize">Grain size <input id="sSize" type="range" min="20" max="800" value="180"><output id="oSize">180 ms</output></label>
+          <label class="slider" for="sJitter">Pitch jitter <input id="sJitter" type="range" min="0" max="100" value="7"><output id="oJitter">±7¢</output></label>
           <label class="slider" for="sDensity">Density <input id="sDensity" type="range" min="1" max="30" value="9"><output id="oDensity">9/s</output></label>
+          <div class="group-label">Character</div>
           <label class="slider" for="sSpace">Space <input id="sSpace" type="range" min="0" max="100" value="65"><output id="oSpace">65</output></label>
           <label class="slider" for="sDrift">Drift <input id="sDrift" type="range" min="0" max="100" value="50"><output id="oDrift">50</output></label>
           <label class="slider" for="sBright">Brightness <input id="sBright" type="range" min="0" max="100" value="60"><output id="oBright">60</output></label>
+          <div class="group-label">Tape</div>
+          <label class="slider" for="sWow">Wow &amp; flutter <input id="sWow" type="range" min="0" max="100" value="25"><output id="oWow">25</output></label>
+          <label class="slider" for="sSat">Saturation <input id="sSat" type="range" min="0" max="100" value="20"><output id="oSat">20</output></label>
+          <label class="slider" for="sHiss">Hiss <input id="sHiss" type="range" min="0" max="100" value="15"><output id="oHiss">15</output></label>
         </div>
-        <p class="hint">Drift sets how often the soundscape moves to a new key and texture. Changes to the essence are picked up while it plays.</p>
+        <p class="hint">Scan speed moves a playhead through the essence: 0 holds one spot, 1× is the original speed, negative runs backwards. Spray scatters grains around it. The freeze pad holds the spectrum at the scan head as an endless, seamless tone and refreezes on every scene change. Drift sets how often scenes change.</p>
+        <p class="err" id="freezeErr" hidden>The freeze pad needs AudioWorklet support, which this view doesn't allow. The other layers still work.</p>
       </section>
 
       <section class="panel" aria-labelledby="h-takes">
@@ -255,7 +267,16 @@ function ensureCtx() {
   const monitor = ctx.createGain(); monitor.gain.value = vol();
   const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.85;
   const recDest = ctx.createMediaStreamDestination ? ctx.createMediaStreamDestination() : null;
-  master.connect(tone); tone.connect(trim); trim.connect(glue); glue.connect(lim); lim.connect(clip); clip.connect(print);
+  // Tape stage: modulated delay (wow, slow drift, flutter) → tanh saturation → head bump. Hiss is fed into master so it fades with it.
+  const tapeDelay = ctx.createDelay(0.05); tapeDelay.delayTime.value = 0.012;
+  const lfo = (f, type = "sine") => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; const g = ctx.createGain(); g.gain.value = 0; o.connect(g); g.connect(tapeDelay.delayTime); o.start(); return g; };
+  const wowG = lfo(0.55), driftG = lfo(0.13, "triangle"), flutG = lfo(6.3);
+  const sat = ctx.createWaveShaper(); sat.oversample = "2x";
+  const bump = bq("peaking", 110, 0.9, 0);
+  const hissSrc = ctx.createBufferSource(); hissSrc.buffer = makeNoise(ctx, 3); hissSrc.loop = true;
+  const hissHP = bq("highpass", 1800, 0.5), hissLP = bq("lowpass", 12000, 0.5), hissG = ctx.createGain(); hissG.gain.value = 0;
+  hissSrc.connect(hissHP); hissHP.connect(hissLP); hissLP.connect(hissG); hissG.connect(master); hissSrc.start();
+  master.connect(tapeDelay); tapeDelay.connect(sat); sat.connect(bump); bump.connect(tone); tone.connect(trim); trim.connect(glue); glue.connect(lim); lim.connect(clip); clip.connect(print);
   print.connect(monitor); monitor.connect(analyser); analyser.connect(ctx.destination);
   if (recDest) print.connect(recDest);
 
@@ -284,11 +305,122 @@ function ensureCtx() {
     g.connect(master); g.connect(send); send.connect(verbIn); g.connect(dsend); dsend.connect(delayIn);
     return { g, send, dsend, name };
   };
-  G = { monitor, trim, tone, master, analyser, recDest, verbOut, kw, peakAn, grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer") };
-  G.drone.dsend.gain.value = 0;
+  G = { monitor, trim, tone, master, analyser, recDest, verbOut, kw, peakAn, wowG, driftG, flutG, sat, satAmt: -1, bump, hissG,
+        grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer"), freeze: bus("freeze"), freezeNode: null };
+  G.drone.dsend.gain.value = 0; G.freeze.dsend.gain.value = 0;
+  G.freezeReady = (async () => {
+    if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") throw new Error("no AudioWorklet");
+    const url = URL.createObjectURL(new Blob([FREEZE_SRC], { type: "application/javascript" }));
+    await ctx.audioWorklet.addModule(url);
+    const node = new AudioWorkletNode(ctx, "freeze-proc", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+    const hp = bq("highpass", 35, 0.7); node.connect(hp); hp.connect(G.freeze.g);
+    G.freezeNode = node;
+  })().catch(() => {
+    $("freezeErr").hidden = false; $("sFreeze").disabled = true; $("oFreeze").textContent = "n/a"; $("refreeze").disabled = true;
+  });
   applyParams();
   return ctx;
 }
+function makeNoise(c, secs) {
+  const b = c.createBuffer(2, Math.floor(c.sampleRate * secs), c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  return b;
+}
+function satCurve(amt) {
+  // tanh with unity small-signal gain: quiet passages pass clean, peaks round off
+  const d = 1 + amt * 4, n = 4096, c = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; c[i] = Math.tanh(d * x) / d; }
+  return c;
+}
+
+/* ---------- spectral freeze ----------
+   Main thread: FFT 5 overlapping Hann frames around the scan head, average their magnitudes,
+   shift them to the scene's root and normalize. AudioWorklet: every hop (N/4), resynthesize that
+   magnitude spectrum with fresh random phases per channel, Hann-window it and overlap-add.
+   Random phases make it an endless, seamless, decorrelated stereo pad. New spectra glide in. */
+function fft(re, im, inv) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (inv ? 2 : -2) * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let j = 0; j < half; j++) {
+        const a = i + j, b = a + half, xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - xr; im[b] = im[a] - xi; re[a] += xr; im[a] += xi;
+        const ncr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = ncr;
+      }
+    }
+  }
+  if (inv) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+}
+const FN = 4096;
+const FREEZE_SRC = `${fft.toString()}
+const N = ${FN}, H = N / 4, B = N / 2 + 1;
+class FreezeProc extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.cur = new Float32Array(B); this.tgt = new Float32Array(B); this.glide = 0.05;
+    this.win = new Float32Array(N); for (let i = 0; i < N; i++) this.win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    this.ola = [new Float32Array(N), new Float32Array(N)]; this.re = new Float32Array(N); this.im = new Float32Array(N); this.pos = 0;
+    this.port.onmessage = e => { if (e.data.mags) this.tgt.set(e.data.mags); if (e.data.glide) this.glide = e.data.glide; };
+  }
+  synth() {
+    const cur = this.cur, tgt = this.tgt, g = this.glide, re = this.re, im = this.im, w = this.win;
+    for (let k = 0; k < B; k++) cur[k] += (tgt[k] - cur[k]) * g;
+    for (let c = 0; c < 2; c++) {
+      re[0] = 0; im[0] = 0; re[N / 2] = 0; im[N / 2] = 0;
+      for (let k = 1; k < N / 2; k++) {
+        const ph = Math.random() * 6.283185307179586, a = cur[k];
+        re[k] = a * Math.cos(ph); im[k] = a * Math.sin(ph); re[N - k] = re[k]; im[N - k] = -im[k];
+      }
+      fft(re, im, true);
+      const o = this.ola[c]; for (let n = 0; n < N; n++) o[n] += re[n] * w[n];
+    }
+  }
+  process(inputs, outputs) {
+    const out = outputs[0], len = out[0].length;
+    for (let i = 0; i < len; i++) {
+      if (this.pos === 0) this.synth();
+      for (let c = 0; c < out.length && c < 2; c++) out[c][i] = this.ola[c][this.pos];
+      if (++this.pos === H) { for (const o of this.ola) { o.copyWithin(0, H); o.fill(0, N - H); } this.pos = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor("freeze-proc", FreezeProc);`;
+function freezeMags(posSec) {
+  const buf = ess.fwd, sr = buf.sampleRate, nCh = buf.numberOfChannels, len = buf.length, B = FN / 2 + 1;
+  const mono = new Float32Array(len);
+  for (let c = 0; c < nCh; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) mono[i] += d[i] / nCh; }
+  const acc = new Float32Array(B), re = new Float32Array(FN), im = new Float32Array(FN), center = Math.floor(posSec * sr);
+  for (let f = -2; f <= 2; f++) {
+    const start = center - FN / 2 + f * 512;
+    for (let i = 0; i < FN; i++) { const idx = start + i; re[i] = (idx >= 0 && idx < len ? mono[idx] : 0) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / FN)); im[i] = 0; }
+    fft(re, im, false);
+    for (let k = 0; k < B; k++) acc[k] += Math.hypot(re[k], im[k]) / 5;
+  }
+  return acc;
+}
+function shapeMags(src, root) {
+  const B = src.length, out = new Float32Array(B);
+  for (let k = 1; k < B; k++) { const s = k / root, i = Math.floor(s), fr = s - i; if (i + 1 < B) out[k] = src[i] * (1 - fr) + src[i + 1] * fr; }
+  let p = 0; for (let k = 1; k < B; k++) p += out[k] * out[k];
+  const rms = Math.sqrt(2 * p) / FN, g = rms > 1e-9 ? 0.08 / rms : 0; // aim for ~0.1 RMS after overlap-add
+  for (let k = 0; k < B; k++) out[k] *= g;
+  return out;
+}
+function sendFreeze(glideSecs) {
+  if (!G || !G.freezeNode || !ess) return;
+  const mags = shapeMags(freezeMags(scan.pos * ess.dur), scene.root);
+  const glide = 1 - Math.exp(-(FN / 4 / ctx.sampleRate) / glideSecs);
+  G.freezeNode.port.postMessage({ mags, glide }, [mags.buffer]);
+}
+function silenceFreeze() { if (G && G.freezeNode) G.freezeNode.port.postMessage({ mags: new Float32Array(FN / 2 + 1), glide: 0.05 }); }
+$("refreeze").addEventListener("click", () => { if (running) sendFreeze(1.5); });
 function makeClipCurve(c) {
   // linear up to 80 % of the ceiling, then a tanh knee that never exceeds it
   const n = 8192, k = 0.8 * c, out = new Float32Array(n);
@@ -359,6 +491,9 @@ function readParams() {
   P.grains = $("sGrains").value / 100; P.drone = $("sDrone").value / 100; P.shimmer = $("sShimmer").value / 100;
   P.density = +$("sDensity").value; P.space = $("sSpace").value / 100; P.drift = $("sDrift").value / 100; P.bright = $("sBright").value / 100;
   P.trim = +$("sTrim").value;
+  P.freeze = $("sFreeze").value / 100; P.scan = $("sScan").value / 100; P.spray = $("sSpray").value / 100;
+  P.gsize = +$("sSize").value; P.jitter = +$("sJitter").value;
+  P.wow = $("sWow").value / 100; P.sat = $("sSat").value / 100; P.hiss = $("sHiss").value / 100;
 }
 function applyParams() {
   readParams();
@@ -367,7 +502,15 @@ function applyParams() {
   G.grains.g.gain.setTargetAtTime(P.grains * 0.9, t, tc);
   G.drone.g.gain.setTargetAtTime(P.drone * 0.55, t, tc);
   G.shimmer.g.gain.setTargetAtTime(P.shimmer * 0.7, t, tc);
-  for (const b of [G.grains, G.drone, G.shimmer]) b.send.gain.setTargetAtTime(P.space * 1.1, t, tc);
+  G.freeze.g.gain.setTargetAtTime(P.freeze * 0.3, t, tc);
+  for (const b of [G.grains, G.drone, G.shimmer, G.freeze]) b.send.gain.setTargetAtTime(P.space * 1.1, t, tc);
+  // tape
+  G.wowG.gain.setTargetAtTime(P.wow * 0.0012, t, tc);
+  G.driftG.gain.setTargetAtTime(P.wow * 0.0016, t, tc);
+  G.flutG.gain.setTargetAtTime(P.wow * 0.00006, t, tc);
+  if (G.satAmt !== P.sat) { G.sat.curve = P.sat > 0.001 ? satCurve(P.sat) : null; G.satAmt = P.sat; }
+  G.bump.gain.setTargetAtTime(P.sat * 2.5, t, tc);
+  G.hissG.gain.setTargetAtTime(P.hiss * 0.006, t, tc);
   G.grains.dsend.gain.setTargetAtTime(P.space * 0.5, t, tc);
   G.shimmer.dsend.gain.setTargetAtTime(P.space * 0.7, t, tc);
   G.verbOut.gain.setTargetAtTime(0.4 + P.space * 0.8, t, tc);
@@ -376,7 +519,9 @@ function applyParams() {
   G.monitor.gain.setTargetAtTime(vol(), t, 0.05);
 }
 const dB = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + " dB";
-const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v + "/s", Space: v => v, Drift: v => v, Bright: v => v, Trim: v => dB(+v) };
+const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v + "/s", Space: v => v, Drift: v => v, Bright: v => v, Trim: v => dB(+v),
+  Freeze: v => v, Scan: v => (v < 0 ? "−" : "") + Math.abs(v / 100).toFixed(2) + "×", Spray: v => v + "%", Size: v => v + " ms", Jitter: v => "±" + v + "¢",
+  Wow: v => v, Sat: v => v, Hiss: v => v };
 for (const k of Object.keys(outs)) $("s" + k).addEventListener("input", e => { $("o" + k).textContent = outs[k](e.target.value); applyParams(); });
 $("vol").addEventListener("input", applyParams);
 
@@ -398,20 +543,30 @@ function scheduleGrains() {
   const ahead = ctx.currentTime + 0.12;
   if (nextGrain < ctx.currentTime) nextGrain = ctx.currentTime + 0.01;
   while (nextGrain < ahead) {
+    advanceScan(nextGrain);
     if (P.grains > 0.001 && ess) playGrain(nextGrain);
     const rate = Math.max(0.5, P.density * scene.densMul * (0.75 + 0.5 * Math.sin(ctx.currentTime / 7)));
     nextGrain += -Math.log(1 - Math.random()) / rate;
   }
 }
 const HANN = Float32Array.from({ length: 64 }, (_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / 63));
+/* Scan head: a playhead moving through the essence at P.scan × real time (wraps around). */
+const scan = { pos: 0, t: 0 };
+function advanceScan(t) {
+  if (!ess) return;
+  const dt = Math.max(0, t - scan.t); scan.t = t;
+  scan.pos = (((scan.pos + dt * P.scan / ess.dur) % 1) + 1) % 1;
+}
 function playGrain(t) {
-  // ±7 cent random detune per grain so the cloud blooms instead of beating
-  const ratio = scene.root * pick(scene.set.r) * Math.pow(2, rand(-7, 7) / 1200);
-  const maxDur = clamp(1.4 / Math.sqrt(P.density), 0.12, 0.7);
-  let dur = rand(0.06, maxDur);
+  // random detune per grain (Pitch jitter, in cents) so the cloud blooms instead of beating
+  const ratio = scene.root * pick(scene.set.r) * Math.pow(2, rand(-P.jitter, P.jitter) / 1200);
   const span = ess.dur;
+  let dur = P.gsize / 1000 * rand(0.75, 1.25);
   dur = Math.min(dur, span / ratio * 0.95);
-  const off = rand(0, Math.max(0, span - dur * ratio));
+  // grain centre = scan head ± spray, then keep the whole grain inside the essence
+  let c = (scan.pos + rand(-0.5, 0.5) * P.spray) * span;
+  c = ((c % span) + span) % span;
+  const off = clamp(c - dur * ratio / 2, 0, Math.max(0, span - dur * ratio));
   const src = ctx.createBufferSource(); src.buffer = ess.fwd; src.playbackRate.value = ratio;
   const g = ctx.createGain(), amp = clamp(0.5 / Math.sqrt(P.density * dur * 3), 0.08, 0.45);
   g.gain.value = 0; g.gain.setValueCurveAtTime(HANN.map(v => v * amp), t, dur); // Hann window
@@ -480,6 +635,7 @@ function newScene() {
       n.src.playbackRate.linearRampToValueAtTime(scene.root * n.mult, t + glide);
       n.lp.frequency.setTargetAtTime(n.cut * rand(0.6, 1.8), t, glide / 2);
     }
+    if (P.freeze > 0.001) sendFreeze(glide / 2);
     updateScene();
   }
   sceneTimer = setTimeout(newScene, (34 - P.drift * 24) * 1000 * rand(0.8, 1.2));
@@ -497,8 +653,9 @@ async function start() {
   scene.n = 1; scene.root = 1; scene.set = SETS[0]; scene.densMul = 1;
   const t = ctx.currentTime;
   G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(1, t + 2.5);
-  nextGrain = t + 0.05;
+  nextGrain = t + 0.05; scan.t = t;
   startDrone();
+  G.freezeReady.then(() => { if (running) { sendFreeze(2.5); updateUI(); } });
   sched = setInterval(scheduleGrains, 25);
   shimmerTimer = setTimeout(shimmerEvent, 1500);
   sceneTimer = setTimeout(newScene, (34 - P.drift * 24) * 1000);
@@ -510,6 +667,7 @@ function stop() {
   const t = ctx.currentTime;
   G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(0, t + 1.5);
   stopDrone(1.5);
+  setTimeout(() => { if (!running) silenceFreeze(); }, 1600);
   if (recorder) stopTake();
   updateUI();
 }
@@ -517,7 +675,7 @@ $("start").addEventListener("click", () => running ? stop() : start());
 
 function essenceChanged() {
   updateSelText();
-  if (running && ctx) { buildEssence(); stopDrone(3); startDrone(3); }
+  if (running && ctx) { buildEssence(); scan.pos = 0; stopDrone(3); startDrone(3); sendFreeze(2); }
   $("idleSub").textContent = `from the ${(sel[1] - sel[0]).toFixed(1)} s essence of ${source.name === "example chime" ? "the example chime" : "“" + source.name + "”"}.`;
 }
 
@@ -528,6 +686,7 @@ function updateUI() {
   $("stateText").textContent = running ? "Playing" : "Silent";
   $("idle").hidden = running;
   $("recTake").disabled = !running || !G?.recDest || typeof MediaRecorder === "undefined";
+  $("refreeze").disabled = !running || !G?.freezeNode;
   updateScene();
 }
 function fmt(s) { const m = Math.floor(s / 60); return m + ":" + String(Math.floor(s % 60)).padStart(2, "0"); }
@@ -657,7 +816,6 @@ function drawViz() {
     g.fillStyle = tok.muted; g.fillText(lab, 10 * dpr, y);
   }
   g.textBaseline = "alphabetic"; g.fillStyle = tok.muted;
-  g.fillText("pitch", 10 * dpr, top - 10 * dpr);
   g.fillText("start of essence", padL, h - 8 * dpr);
   const endLab = "end"; g.fillText(endLab, padL + iw - g.measureText(endLab).width, h - 8 * dpr);
   if (G && (running || G.master.gain.value > 0.01)) {
@@ -673,6 +831,18 @@ function drawViz() {
       const grd = g.createLinearGradient(0, y - 14 * dpr, 0, y + 14 * dpr);
       grd.addColorStop(0, "transparent"); grd.addColorStop(0.5, tok.warm); grd.addColorStop(1, "transparent");
       g.globalAlpha = 0.35 * (P.drone + 0.1); g.fillStyle = grd; g.fillRect(padL, y - 14 * dpr, iw, 28 * dpr); g.globalAlpha = 1;
+    }
+    if (running && G.freezeNode && P.freeze > 0.001) {
+      const y = top + yForRatio(scene.root, ih);
+      g.globalAlpha = 0.10 + 0.15 * P.freeze; g.fillStyle = tok.ink; g.fillRect(padL, y - 2 * dpr, iw, 4 * dpr);
+      g.globalAlpha = 0.8; g.fillStyle = tok.muted; g.fillText("freeze", padL + iw - g.measureText("freeze").width, y - 8 * dpr); g.globalAlpha = 1;
+    }
+    if (running && ess) {
+      const x = padL + scan.pos * iw, sw = P.spray * iw;
+      g.fillStyle = tok.ink; g.globalAlpha = 0.07;
+      g.fillRect(Math.max(padL, x - sw / 2), top, Math.min(padL + iw, x + sw / 2) - Math.max(padL, x - sw / 2), ih);
+      g.globalAlpha = 0.55; g.fillRect(x, top, 1.5 * dpr, ih); g.globalAlpha = 1;
+      g.fillStyle = tok.muted; g.fillText("scan", Math.min(x + 5 * dpr, padL + iw - 30 * dpr), top + 12 * dpr);
     }
   }
   for (let i = particles.length - 1; i >= 0; i--) {
