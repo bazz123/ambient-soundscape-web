@@ -17,6 +17,10 @@ A browser version of the [Ambient Soundscape Generator](https://github.com/dmpav
    Everything then runs through a **tape stage** (wow, drift and flutter on a modulated delay, tanh saturation with a small head bump, and hiss), a reverb with pre-delay and early reflections, and a filtered echo. Every 10–35 seconds (set by *Drift*), the soundscape glides to a new root and interval set.
 
    The master chain is a glue compressor, a fast limiter and an oversampled soft clipper with a −1 dBFS ceiling. A K-weighted loudness meter (momentary, short-term, integrated, peak) has targets of −23, −16 and −14 LUFS, and *Match target* sets the output trim. The volume slider only changes what you hear, not what is recorded or measured.
+   **Harmony.** Each essence's key is detected: spectral peaks are folded into a chroma vector and matched against the Krumhansl–Schmuckler major and minor profiles (the correlation is shown as a confidence), and the tuning offset in cents is estimated from the strongest in-tune peaks. With *Follow detected key* on and a clear key, scenes walk between I, IV and V (a weighted Markov chain), the grain interval sets use the detected mode's third, and a low *Root tone* on the detected tonic, tuned in cents, sits under the mix.
+
+   **Essence slots.** Up to four slots (A–D), each with its own file and region. Each scene change crossfades to the next slot in order: grains switch over gradually, and drones fade between slots. With *Follow detected key* on, slots B–D are transposed (at most ±6 semitones, plus tuning) to slot A's key.
+
 4. **Save the results.** Name a take, then click *Record take* once to start and again to finish. Takes are saved as `.webm` (`.mp4` in Safari).
 
 The stage at the top is a grain map: each dot is a grain or a shimmer, placed by where in the essence it came from (left to right) and by its pitch (up and down). Warm bands show the drone voices, the vertical line is the scan head with its spray range, and the thin line marked "freeze" is the freeze pad.

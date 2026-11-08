@@ -109,6 +109,17 @@ select { font: 12px var(--mono); padding: 4px 6px; border: 1px solid var(--line)
 .mnums div { display: grid; gap: 2px; min-width: 0; }
 .mnums dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; color: var(--muted); }
 .mnums dd { margin: 0; font-family: var(--mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+.slots { display: flex; flex-wrap: wrap; gap: 8px; }
+.slot { text-align: left; align-items: flex-start; gap: 10px; padding: 8px 12px; min-width: 0; max-width: 100%; }
+.slot[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.slot-l { font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--accent); line-height: 1.1; }
+.slot-i { display: grid; gap: 3px; font-size: 13px; line-height: 1.3; min-width: 0; overflow-wrap: anywhere; }
+.slot .readout { font-size: 11px; }
+.slot.playing .slot-l::after { content: " ●"; font-size: 10px; vertical-align: middle; }
+.slot-act { padding: 8px 12px; font-size: 13px; color: var(--muted); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+p.readout { margin: 0; line-height: 1.45; }
 @media (prefers-reduced-motion: reduce) { button.rec.on .rec-dot { animation: none; } .mfill { transition: none; } }
 </style>
 
@@ -131,6 +142,8 @@ select { font: 12px var(--mono); padding: 4px 6px; border: 1px solid var(--line)
 
       <section class="panel" aria-labelledby="h-src">
         <h2 id="h-src"><span class="step">Step 1–2</span> Source and essence</h2>
+        <div class="slots" id="slots" role="tablist" aria-label="Essence slots"></div>
+        <p class="hint">Up to four essence slots. With more than one, each scene change crossfades to the next slot in order, so the soundscape moves through them like chapters. Pick a slot to edit it below.</p>
         <div class="drop" id="drop">
           <div class="grow">
             <div class="name" id="srcName">Example: chime motif</div>
@@ -186,6 +199,10 @@ select { font: 12px var(--mono); padding: 4px 6px; border: 1px solid var(--line)
           <label class="slider" for="sSpace">Space <input id="sSpace" type="range" min="0" max="100" value="65"><output id="oSpace">65</output></label>
           <label class="slider" for="sDrift">Drift <input id="sDrift" type="range" min="0" max="100" value="50"><output id="oDrift">50</output></label>
           <label class="slider" for="sBright">Brightness <input id="sBright" type="range" min="0" max="100" value="60"><output id="oBright">60</output></label>
+          <div class="group-label">Harmony</div>
+          <label class="check" for="follow"><input type="checkbox" id="follow" checked> Follow detected key</label>
+          <label class="slider" for="sRoot">Root tone <input id="sRoot" type="range" min="0" max="100" value="35"><output id="oRoot">35</output></label>
+          <p class="readout" id="keyText">–</p>
           <div class="group-label">Tape</div>
           <label class="slider" for="sWow">Wow &amp; flutter <input id="sWow" type="range" min="0" max="100" value="25"><output id="oWow">25</output></label>
           <label class="slider" for="sSat">Saturation <input id="sSat" type="range" min="0" max="100" value="20"><output id="oSat">20</output></label>
@@ -306,8 +323,8 @@ function ensureCtx() {
     return { g, send, dsend, name };
   };
   G = { monitor, trim, tone, master, analyser, recDest, verbOut, kw, peakAn, wowG, driftG, flutG, sat, satAmt: -1, bump, hissG,
-        grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer"), freeze: bus("freeze"), freezeNode: null };
-  G.drone.dsend.gain.value = 0; G.freeze.dsend.gain.value = 0;
+        grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer"), freeze: bus("freeze"), root: bus("root"), freezeNode: null, rootTone: null };
+  G.drone.dsend.gain.value = 0; G.freeze.dsend.gain.value = 0; G.root.dsend.gain.value = 0;
   G.freezeReady = (async () => {
     if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") throw new Error("no AudioWorklet");
     const url = URL.createObjectURL(new Blob([FREEZE_SRC], { type: "application/javascript" }));
@@ -415,7 +432,7 @@ function shapeMags(src, root) {
 }
 function sendFreeze(glideSecs) {
   if (!G || !G.freezeNode || !ess) return;
-  const mags = shapeMags(freezeMags(scan.pos * ess.dur), scene.root);
+  const mags = shapeMags(freezeMags(scan.pos * ess.dur), scene.root * ess.base);
   const glide = 1 - Math.exp(-(FN / 4 / ctx.sampleRate) / glideSecs);
   G.freezeNode.port.postMessage({ mags, glide }, [mags.buffer]);
 }
@@ -457,20 +474,89 @@ let ess = null; // {fwd, rev, loop, dur}
    and with at most +30 dB of gain. RMS is a stand-in for loudness on a 3 s clip. */
 const ESS_RMS = Math.pow(10, -20 / 20);
 let essGain = 1;
-function computeEssGain() {
-  const sr = source.sampleRate, a = Math.floor(sel[0] * sr), b = Math.max(a + 1, Math.floor(sel[1] * sr));
+function essGainFor(src, s) {
+  const sr = src.sampleRate, a = Math.floor(s[0] * sr), b = Math.max(a + 1, Math.floor(s[1] * sr));
   let ss = 0, pk = 0, n = 0;
-  for (const ch of source.channels.slice(0, 2)) for (let i = a; i < b && i < ch.length; i++) { const v = ch[i]; ss += v * v; const av = Math.abs(v); if (av > pk) pk = av; n++; }
+  for (const ch of src.channels.slice(0, 2)) for (let i = a; i < b && i < ch.length; i++) { const v = ch[i]; ss += v * v; const av = Math.abs(v); if (av > pk) pk = av; n++; }
   const rms = Math.sqrt(ss / Math.max(1, n));
-  essGain = rms < 1e-5 ? 1 : Math.min(ESS_RMS / rms, CEIL / Math.max(pk, 1e-9), 31.6);
-  return essGain;
+  return rms < 1e-5 ? 1 : Math.min(ESS_RMS / rms, CEIL / Math.max(pk, 1e-9), 31.6);
 }
-function buildEssence() {
-  computeEssGain();
-  const gn = essGain;
-  if (!ctx) return;
-  const sr = source.sampleRate, a = Math.floor(sel[0] * sr), b = Math.max(a + Math.floor(0.08 * sr), Math.floor(sel[1] * sr));
-  const nCh = Math.min(2, source.channels.length), n = b - a;
+function computeEssGain() { essGain = essGainFor(source, sel); return essGain; }
+
+/* ---------- key detection ----------
+   Spectral peaks (8192-point FFT, 80 Hz–4 kHz, log-parabolic interpolation) are folded into a
+   12-bin chroma vector, which is correlated with the Krumhansl–Schmuckler major and minor key
+   profiles in all 12 rotations. The best match is the key; its correlation is the confidence.
+   The magnitude-weighted average deviation of the peaks from equal temperament gives the tuning offset in cents. */
+const KS_MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const KS_MIN = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+const PCN = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+const KEY_CONF = 0.5;
+function pearson(x, y) {
+  const n = x.length, mx = avg(x), my = avg(y); let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const a = x[i] - mx, b = y[i] - my; sxy += a * b; sxx += a * a; syy += b * b; }
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+}
+function monoOf(src, s) {
+  const sr = src.sampleRate, a = Math.floor(s[0] * sr), b = Math.max(a + 1, Math.floor(s[1] * sr)), nCh = Math.min(2, src.channels.length);
+  const m = new Float32Array(b - a);
+  for (let c = 0; c < nCh; c++) { const d = src.channels[c]; for (let i = 0; i < m.length; i++) m[i] += (d[a + i] || 0) / nCh; }
+  return m;
+}
+function detectKey(mono, sr) {
+  const N = 8192, hop = 2048, re = new Float32Array(N), im = new Float32Array(N), mags = new Float32Array(N / 2), chroma = new Array(12).fill(0);
+  const kMin = Math.ceil(80 * N / sr), kMax = Math.min(N / 2 - 2, Math.floor(4000 * N / sr));
+  const frames = Math.max(1, Math.floor((mono.length - N) / hop) + 1);
+  let devSum = 0, devW = 0;
+  for (let f = 0; f < frames; f++) {
+    const s0 = f * hop;
+    for (let i = 0; i < N; i++) { re[i] = (mono[s0 + i] || 0) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N)); im[i] = 0; }
+    fft(re, im, false);
+    let mx = 0; for (let k = kMin - 1; k <= kMax + 1; k++) { mags[k] = Math.hypot(re[k], im[k]); if (mags[k] > mx) mx = mags[k]; }
+    if (mx < 1e-6) continue;
+    for (let k = kMin; k <= kMax; k++) {
+      const b = mags[k]; if (b < mx * 0.05 || b < mags[k - 1] || b < mags[k + 1]) continue;
+      const a = Math.log(mags[k - 1] + 1e-12), c = Math.log(mags[k + 1] + 1e-12), lb = Math.log(b), den = a - 2 * lb + c;
+      const freq = (k + (den !== 0 ? 0.5 * (a - c) / den : 0)) * sr / N, midi = 69 + 12 * Math.log2(freq / 440), near = Math.round(midi);
+      chroma[((near % 12) + 12) % 12] += b;
+      // tuning: only strong peaks that sit near a note, so inharmonic partials (bells, noise) don't bias it
+      if (b >= mx * 0.3 && Math.abs(midi - near) < 0.3) { devSum += (midi - near) * b; devW += b; }
+    }
+  }
+  if (!chroma.some(v => v > 0)) return null;
+  let best = { r: -2, pc: 0, mode: "major" };
+  for (const [mode, prof] of [["major", KS_MAJ], ["minor", KS_MIN]]) for (let pc = 0; pc < 12; pc++) {
+    const r = pearson(prof.map((_, i) => chroma[(pc + i) % 12]), prof);
+    if (r > best.r) best = { r, pc, mode };
+  }
+  return { pc: best.pc, mode: best.mode, conf: best.r, cents: devW ? Math.round(100 * devSum / devW) : 0 };
+}
+function updateSlotKey(slot) { slot.key = detectKey(monoOf(slot.source, slot.sel), slot.source.sampleRate); }
+const keyLabel = k => !k ? "no pitched content" : `${PCN[k.pc]} ${k.mode} · ${k.conf < KEY_CONF ? "unclear" : "r " + k.conf.toFixed(2)} · ${k.cents >= 0 ? "+" : "−"}${Math.abs(k.cents)}¢`;
+
+/* ---------- essence slots ---------- */
+const slots = [{ source, sel: sel.slice(), name: "Example: chime motif", meta: "generated in the page · 6.0 s · mono", key: null }];
+let active = 0, essList = [], cur = 0, prevEss = null;
+const xf = { start: 0, dur: 1 };
+function rebuildAll() {
+  essList = slots.map(buildEss);
+  cur = Math.min(cur, essList.length - 1); ess = essList[cur];
+  computeBases();
+}
+/* With "Follow detected key" on, every slot is transposed (±6 semitones max, plus tuning cents) to slot A's tonic. */
+function computeBases() {
+  const A = slots[0].key;
+  essList.forEach((e, i) => {
+    if (!P.follow || !A || !e.key || i === 0) { e.base = 1; return; }
+    let d = ((A.pc - e.key.pc) % 12 + 12) % 12; if (d > 6) d -= 12;
+    e.base = Math.pow(2, (d + (A.cents - e.key.cents) / 100) / 12);
+  });
+}
+function buildEss(slot) {
+  const src = slot.source, s = slot.sel, gn = essGainFor(src, s);
+  const sr = src.sampleRate, a = Math.floor(s[0] * sr), b = Math.max(a + Math.floor(0.08 * sr), Math.floor(s[1] * sr));
+  const nCh = Math.min(2, src.channels.length), n = b - a;
+  const source = src; // the loop below reads the slot's own source
   const fwd = ctx.createBuffer(nCh, n, sr), rev = ctx.createBuffer(nCh, n, sr);
   const xf = Math.min(Math.floor(n * 0.35), Math.floor(sr * 0.8)), loopN = n - xf;
   const loop = ctx.createBuffer(nCh, Math.max(1, loopN), sr);
@@ -482,7 +568,7 @@ function buildEssence() {
       else l[i] = s[i] * gn;
     }
   }
-  ess = { fwd, rev, loop, dur: n / sr };
+  return { fwd, rev, loop, dur: n / sr, key: slot.key, base: 1 };
 }
 
 /* ---------- parameters ---------- */
@@ -494,6 +580,7 @@ function readParams() {
   P.freeze = $("sFreeze").value / 100; P.scan = $("sScan").value / 100; P.spray = $("sSpray").value / 100;
   P.gsize = +$("sSize").value; P.jitter = +$("sJitter").value;
   P.wow = $("sWow").value / 100; P.sat = $("sSat").value / 100; P.hiss = $("sHiss").value / 100;
+  P.follow = $("follow").checked; P.root = $("sRoot").value / 100;
 }
 function applyParams() {
   readParams();
@@ -503,7 +590,8 @@ function applyParams() {
   G.drone.g.gain.setTargetAtTime(P.drone * 0.55, t, tc);
   G.shimmer.g.gain.setTargetAtTime(P.shimmer * 0.7, t, tc);
   G.freeze.g.gain.setTargetAtTime(P.freeze * 0.3, t, tc);
-  for (const b of [G.grains, G.drone, G.shimmer, G.freeze]) b.send.gain.setTargetAtTime(P.space * 1.1, t, tc);
+  G.root.g.gain.setTargetAtTime(P.root * 0.07, t, tc); // ≈ −28 LUFS on its own at the default 35
+  for (const b of [G.grains, G.drone, G.shimmer, G.freeze, G.root]) b.send.gain.setTargetAtTime(P.space * 1.1, t, tc);
   // tape
   G.wowG.gain.setTargetAtTime(P.wow * 0.0012, t, tc);
   G.driftG.gain.setTargetAtTime(P.wow * 0.0016, t, tc);
@@ -521,7 +609,7 @@ function applyParams() {
 const dB = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + " dB";
 const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v + "/s", Space: v => v, Drift: v => v, Bright: v => v, Trim: v => dB(+v),
   Freeze: v => v, Scan: v => (v < 0 ? "−" : "") + Math.abs(v / 100).toFixed(2) + "×", Spray: v => v + "%", Size: v => v + " ms", Jitter: v => "±" + v + "¢",
-  Wow: v => v, Sat: v => v, Hiss: v => v };
+  Wow: v => v, Sat: v => v, Hiss: v => v, Root: v => v };
 for (const k of Object.keys(outs)) $("s" + k).addEventListener("input", e => { $("o" + k).textContent = outs[k](e.target.value); applyParams(); });
 $("vol").addEventListener("input", applyParams);
 
@@ -534,8 +622,59 @@ const SETS = [
   { name: "lydian haze", r: [1, 1.1225, 1.4983, 1.4142, 2] },
   { name: "minor dusk", r: [1, 1.1892, 1.4983, 0.5] }
 ];
+/* Key-aware scenes: a weighted Markov walk over the primary chords (tonic, subdominant, dominant).
+   The whole essence is transposed to that degree (IV = up a fourth, V = down a fourth), and the
+   grain interval sets use only the detected mode's third, so harmony stays in the key's family. */
+const PROG = {
+  major: { I: [["IV", 0.4], ["V", 0.35], ["I", 0.25]], IV: [["I", 0.45], ["V", 0.45], ["IV", 0.1]], V: [["I", 0.7], ["IV", 0.3]] },
+  minor: { i: [["iv", 0.4], ["v", 0.35], ["i", 0.25]], iv: [["i", 0.45], ["v", 0.45], ["iv", 0.1]], v: [["i", 0.7], ["iv", 0.3]] }
+};
+const DEG = { I: 0, IV: 5, V: -5, i: 0, iv: 5, v: -5 };
+const setsFor = mode => mode === "major" ? [SETS[0], SETS[1], SETS[2]] : [SETS[0], SETS[4], SETS[2]];
+const wpick = opts => { let r = Math.random(); for (const [v, w] of opts) if ((r -= w) <= 0) return v; return opts[0][0]; };
+const refKey = () => P.follow ? slots[0].key : (ess ? ess.key : slots[active].key);
+const keyMode = () => { const k = refKey(); return P.follow && k && k.conf >= KEY_CONF ? k : null; };
+function rootHz() {
+  const k = refKey(); if (!k) return 0;
+  let f = 440 * Math.pow(2, (k.pc - 9) / 12 + k.cents / 1200);
+  while (f >= 110) f /= 2; while (f < 55) f *= 2;
+  return f;
+}
+/* Root tone: sine on the detected tonic (55–110 Hz), a soft octave and fifth, low-passed. */
+function startRootTone(fade = 5) {
+  const f = rootHz() * scene.root; if (!f) return;
+  const t = ctx.currentTime, out = ctx.createGain();
+  out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(1, t + fade);
+  const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 700;
+  const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 35;
+  const oscs = [[1, "sine", 0.5], [2, "triangle", 0.12], [1.5, "sine", 0.07]].map(([m, type, lvl]) => {
+    const o = ctx.createOscillator(); o.type = type; o.frequency.value = f * m; o.detune.value = rand(-3, 3);
+    const g = ctx.createGain(); g.gain.value = lvl; o.connect(g); g.connect(lp); o.start(t); return [o, m];
+  });
+  lp.connect(hp); hp.connect(out); out.connect(G.root.g);
+  G.rootTone = { oscs, out };
+}
+function stopRootTone(fade = 2) {
+  const r = G && G.rootTone; if (!r) return;
+  const t = ctx.currentTime;
+  r.out.gain.cancelScheduledValues(t); r.out.gain.setValueAtTime(r.out.gain.value, t); r.out.gain.linearRampToValueAtTime(0, t + fade);
+  for (const [o] of r.oscs) o.stop(t + fade + 0.1);
+  G.rootTone = null;
+}
+/* Glide drones and the root tone to the current scene root (each drone keeps its own slot's transposition). */
+function retuneVoices(glide) {
+  const t = ctx.currentTime;
+  for (const n of droneNodes) {
+    const p = n.src.playbackRate; p.cancelScheduledValues(t); p.setValueAtTime(p.value, t);
+    p.linearRampToValueAtTime(scene.root * n.mult * n.base, t + glide);
+  }
+  const f = rootHz() * scene.root;
+  if (G.rootTone && f) for (const [o, m] of G.rootTone.oscs) {
+    o.frequency.cancelScheduledValues(t); o.frequency.setValueAtTime(o.frequency.value, t); o.frequency.exponentialRampToValueAtTime(f * m, t + glide);
+  }
+}
 let running = false, sched = null, sceneTimer = null, shimmerTimer = null, nextGrain = 0;
-const scene = { n: 1, root: 1, set: SETS[0], densMul: 1 };
+const scene = { n: 1, root: 1, set: SETS[0], densMul: 1, deg: null };
 let droneNodes = [];
 const particles = [];
 
@@ -558,16 +697,19 @@ function advanceScan(t) {
   scan.pos = (((scan.pos + dt * P.scan / ess.dur) % 1) + 1) % 1;
 }
 function playGrain(t) {
+  // during a slot crossfade, each grain comes from the new slot with a probability rising from 0 to 1
+  let e = ess;
+  if (prevEss && t < xf.start + xf.dur && Math.random() > (t - xf.start) / xf.dur) e = prevEss;
   // random detune per grain (Pitch jitter, in cents) so the cloud blooms instead of beating
-  const ratio = scene.root * pick(scene.set.r) * Math.pow(2, rand(-P.jitter, P.jitter) / 1200);
-  const span = ess.dur;
+  const ratio = scene.root * e.base * pick(scene.set.r) * Math.pow(2, rand(-P.jitter, P.jitter) / 1200);
+  const span = e.dur;
   let dur = P.gsize / 1000 * rand(0.75, 1.25);
   dur = Math.min(dur, span / ratio * 0.95);
   // grain centre = scan head ± spray, then keep the whole grain inside the essence
   let c = (scan.pos + rand(-0.5, 0.5) * P.spray) * span;
   c = ((c % span) + span) % span;
   const off = clamp(c - dur * ratio / 2, 0, Math.max(0, span - dur * ratio));
-  const src = ctx.createBufferSource(); src.buffer = ess.fwd; src.playbackRate.value = ratio;
+  const src = ctx.createBufferSource(); src.buffer = e.fwd; src.playbackRate.value = ratio;
   const g = ctx.createGain(), amp = clamp(0.5 / Math.sqrt(P.density * dur * 3), 0.08, 0.45);
   g.gain.value = 0; g.gain.setValueCurveAtTime(HANN.map(v => v * amp), t, dur); // Hann window
   const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
@@ -581,7 +723,7 @@ function startDrone(fadeIn = 4) {
   const t = ctx.currentTime;
   for (const [mult, lvl, cut] of [[0.5, 0.8, 900], [0.25, 0.6, 500]]) {
     const src = ctx.createBufferSource(); src.buffer = ess.loop; src.loop = true;
-    src.playbackRate.value = scene.root * mult;
+    src.playbackRate.value = scene.root * mult * ess.base;
     const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = cut; lp.Q.value = 2;
     const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 35; hp.Q.value = 0.707; // keep sub rumble out
     const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = rand(0.02, 0.05); lfoG.gain.value = cut * 0.7;
@@ -591,7 +733,7 @@ function startDrone(fadeIn = 4) {
     src.connect(hp); hp.connect(lp); lp.connect(g);
     if (pan) { pan.pan.value = mult === 0.5 ? -0.35 : 0.35; g.connect(pan); pan.connect(G.drone.g); } else g.connect(G.drone.g);
     src.start(t, rand(0, ess.loop.duration)); lfo.start(t);
-    droneNodes.push({ src, g, lfo, mult, lp, cut });
+    droneNodes.push({ src, g, lfo, mult, lp, cut, base: ess.base });
   }
 }
 function stopDrone(fade = 3) {
@@ -605,7 +747,7 @@ function stopDrone(fade = 3) {
 function shimmerEvent() {
   if (!running) return;
   if (P.shimmer > 0.001 && ess) {
-    const t = ctx.currentTime + 0.05, ratio = scene.root * pick([2, 1.5, 2, 3]);
+    const t = ctx.currentTime + 0.05, ratio = scene.root * ess.base * pick([2, 1.5, 2, 3]);
     const len = Math.min(ess.dur, rand(0.6, 1.8));
     const src = ctx.createBufferSource(); src.buffer = ess.rev; src.playbackRate.value = ratio;
     const off = rand(0, Math.max(0, ess.dur - len));
@@ -625,36 +767,56 @@ function newScene() {
   if (!running) return;
   if (P.drift > 0.02) {
     scene.n++;
-    scene.root = Math.random() < 0.3 ? 1 : pick(ROOTS.filter(r => r !== scene.root));
-    scene.set = pick(SETS.filter(s => s !== scene.set));
+    const k = keyMode();
+    if (k) {
+      const opts = PROG[k.mode][scene.deg] || PROG[k.mode][k.mode === "major" ? "I" : "i"];
+      scene.deg = wpick(opts);
+      scene.root = Math.pow(2, DEG[scene.deg] / 12);
+      scene.set = pick(setsFor(k.mode).filter(s => s !== scene.set));
+    } else {
+      scene.deg = null;
+      scene.root = Math.random() < 0.3 ? 1 : pick(ROOTS.filter(r => r !== scene.root));
+      scene.set = pick(SETS.filter(s => s !== scene.set));
+    }
     scene.densMul = rand(0.55, 1.45);
     const t = ctx.currentTime, glide = 6 + (1 - P.drift) * 6;
-    for (const n of droneNodes) {
-      n.src.playbackRate.cancelScheduledValues(t);
-      n.src.playbackRate.setValueAtTime(n.src.playbackRate.value, t);
-      n.src.playbackRate.linearRampToValueAtTime(scene.root * n.mult, t + glide);
-      n.lp.frequency.setTargetAtTime(n.cut * rand(0.6, 1.8), t, glide / 2);
-    }
+    if (essList.length > 1) {
+      // move to the next slot: old drones glide and fade, new ones fade in; grains cross over gradually
+      prevEss = ess; cur = (cur + 1) % essList.length; ess = essList[cur];
+      xf.start = t; xf.dur = glide;
+      retuneVoices(glide); stopDrone(glide); startDrone(glide);
+    } else retuneVoices(glide);
+    for (const n of droneNodes) n.lp.frequency.setTargetAtTime(n.cut * rand(0.6, 1.8), t, glide / 2);
     if (P.freeze > 0.001) sendFreeze(glide / 2);
     updateScene();
   }
   sceneTimer = setTimeout(newScene, (34 - P.drift * 24) * 1000 * rand(0.8, 1.2));
 }
 function updateScene() {
-  const st = Math.round(12 * Math.log2(scene.root));
-  $("sceneText").textContent = running ? `Scene ${scene.n} · ${scene.set.name} · root ${st >= 0 ? "+" : ""}${st} st` : "";
+  let txt = "";
+  if (running) {
+    const k = keyMode();
+    if (k && scene.deg) txt = `Scene ${scene.n} · ${scene.deg} · ${PCN[(k.pc + DEG[scene.deg] + 12) % 12]} ${k.mode} · ${scene.set.name}`;
+    else { const st = Math.round(12 * Math.log2(scene.root)); txt = `Scene ${scene.n} · ${scene.set.name} · root ${st >= 0 ? "+" : ""}${st} st`; }
+    if (essList.length > 1) txt += ` · slot ${"ABCD"[cur]}`;
+  }
+  $("sceneText").textContent = txt;
+  renderSlots();
 }
 
 async function start() {
   ensureCtx(); await ctx.resume();
-  buildEssence();
+  syncSlot(); cur = 0; rebuildAll(); prevEss = null;
   running = true;
   resetLoudness();
-  scene.n = 1; scene.root = 1; scene.set = SETS[0]; scene.densMul = 1;
+  const k = keyMode();
+  scene.n = 1; scene.root = 1; scene.densMul = 1;
+  scene.deg = k ? (k.mode === "major" ? "I" : "i") : null;
+  scene.set = k ? setsFor(k.mode)[0] : SETS[0];
   const t = ctx.currentTime;
   G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(1, t + 2.5);
   nextGrain = t + 0.05; scan.t = t;
-  startDrone();
+  startDrone(); startRootTone();
   G.freezeReady.then(() => { if (running) { sendFreeze(2.5); updateUI(); } });
   sched = setInterval(scheduleGrains, 25);
   shimmerTimer = setTimeout(shimmerEvent, 1500);
@@ -666,7 +828,7 @@ function stop() {
   clearInterval(sched); clearTimeout(shimmerTimer); clearTimeout(sceneTimer);
   const t = ctx.currentTime;
   G.master.gain.cancelScheduledValues(t); G.master.gain.setValueAtTime(G.master.gain.value, t); G.master.gain.linearRampToValueAtTime(0, t + 1.5);
-  stopDrone(1.5);
+  stopDrone(1.5); stopRootTone(1.5);
   setTimeout(() => { if (!running) silenceFreeze(); }, 1600);
   if (recorder) stopTake();
   updateUI();
@@ -674,8 +836,14 @@ function stop() {
 $("start").addEventListener("click", () => running ? stop() : start());
 
 function essenceChanged() {
-  updateSelText();
-  if (running && ctx) { buildEssence(); scan.pos = 0; stopDrone(3); startDrone(3); sendFreeze(2); }
+  syncSlot(); updateSlotKey(slots[active]);
+  updateSelText(); renderSlots(); updateKeyText();
+  if (running && ctx) {
+    rebuildAll();
+    if (active === cur) { scan.pos = 0; stopDrone(3); startDrone(3); sendFreeze(2); }
+    if (active === 0 || !P.follow) { stopRootTone(3); startRootTone(3); }
+    updateScene();
+  }
   $("idleSub").textContent = `from the ${(sel[1] - sel[0]).toFixed(1)} s essence of ${source.name === "example chime" ? "the example chime" : "“" + source.name + "”"}.`;
 }
 
@@ -718,7 +886,8 @@ async function loadFile(file) {
     sel = bestWindow(channels[0], buf.sampleRate, 3).map(v => Math.round(v * 100) / 100);
     $("srcName").textContent = file.name;
     $("srcMeta").textContent = `${buf.duration.toFixed(1)} s · ${buf.numberOfChannels > 1 ? "stereo" : "mono"} · ${(buf.sampleRate / 1000).toFixed(1)} kHz · loudest 3 s pre-selected`;
-    $("takeName").value = source.name + "-soundscape";
+    if (active === 0) $("takeName").value = source.name + "-soundscape";
+    slots[active].name = file.name; slots[active].meta = $("srcMeta").textContent;
     computePeaks(); drawWave(); essenceChanged();
   } catch (e) {
     $("srcErr").textContent = `This browser couldn't decode “${file.name}”. Try a WAV or MP3 version of it.`;
@@ -833,7 +1002,7 @@ function drawViz() {
       g.globalAlpha = 0.35 * (P.drone + 0.1); g.fillStyle = grd; g.fillRect(padL, y - 14 * dpr, iw, 28 * dpr); g.globalAlpha = 1;
     }
     if (running && G.freezeNode && P.freeze > 0.001) {
-      const y = top + yForRatio(scene.root, ih);
+      const y = top + yForRatio(scene.root * (ess ? ess.base : 1), ih);
       g.globalAlpha = 0.10 + 0.15 * P.freeze; g.fillStyle = tok.ink; g.fillRect(padL, y - 2 * dpr, iw, 4 * dpr);
       g.globalAlpha = 0.8; g.fillStyle = tok.muted; g.fillText("freeze", padL + iw - g.measureText("freeze").width, y - 8 * dpr); g.globalAlpha = 1;
     }
@@ -970,8 +1139,72 @@ $("match").addEventListener("click", () => {
 });
 setInterval(meterTick, 100);
 
+/* ---------- slot UI ---------- */
+const r2 = v => Math.round(v * 100) / 100;
+function syncSlot() { const s = slots[active]; s.source = source; s.sel = sel.slice(); }
+function showSlot(i) {
+  active = i; const s = slots[i];
+  source = s.source; sel = s.sel.slice();
+  $("srcName").textContent = s.name; $("srcMeta").textContent = s.meta;
+  computePeaks(); updateSelText(); renderSlots(); updateKeyText();
+}
+function selectSlot(i) { if (i === active) return; stopPreview(); syncSlot(); showSlot(i); }
+function addSlot() {
+  if (slots.length >= 4) return;
+  stopPreview(); syncSlot();
+  // new slot starts on the next stretch of the same file, so it differs from the current one
+  const s = slots[active], d = s.sel[1] - s.sel[0], dur = s.source.channels[0].length / s.source.sampleRate;
+  let a = s.sel[1]; if (a + d > dur) a = 0;
+  const ns = { source: s.source, sel: [r2(a), r2(Math.min(dur, a + d))], name: s.name, meta: s.meta, key: null };
+  updateSlotKey(ns); slots.push(ns);
+  showSlot(slots.length - 1);
+  if (running) { rebuildAll(); updateScene(); }
+}
+function removeSlot() {
+  if (slots.length < 2) return;
+  stopPreview(); slots.splice(active, 1);
+  showSlot(Math.max(0, active - 1));
+  if (running) { rebuildAll(); if (active === 0 || !P.follow) retuneVoices(3); updateScene(); }
+}
+function renderSlots() {
+  const wrap = $("slots"); wrap.textContent = "";
+  slots.forEach((s, i) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "slot" + (running && essList.length > 1 && i === cur ? " playing" : "");
+    b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(i === active));
+    const L = document.createElement("span"); L.className = "slot-l"; L.textContent = "ABCD"[i];
+    const info = document.createElement("span"); info.className = "slot-i";
+    const n1 = document.createElement("span"); const nm = s.name.length > 22 ? s.name.slice(0, 21) + "…" : s.name;
+    n1.textContent = `${nm} · ${s.sel[0].toFixed(1)}–${s.sel[1].toFixed(1)} s`;
+    const n2 = document.createElement("span"); n2.className = "readout"; n2.textContent = keyLabel(s.key);
+    info.append(n1, n2); b.append(L, info); b.onclick = () => selectSlot(i); wrap.append(b);
+  });
+  if (slots.length < 4) { const a = document.createElement("button"); a.type = "button"; a.className = "slot-act"; a.textContent = "+ Add slot"; a.onclick = addSlot; wrap.append(a); }
+  if (slots.length > 1) { const r = document.createElement("button"); r.type = "button"; r.className = "slot-act"; r.textContent = `Remove slot ${"ABCD"[active]}`; r.onclick = removeSlot; wrap.append(r); }
+}
+function updateKeyText() {
+  readParams();
+  const A = slots[0].key, cur0 = slots[active].key;
+  let t;
+  if (P.follow) {
+    if (A && A.conf >= KEY_CONF) {
+      const f = rootHz();
+      t = `Key ${PCN[A.pc]} ${A.mode}, from slot A. Scenes move between I, IV and V${slots.length > 1 ? "; other slots are transposed to match" : ""}. Root tone ${f.toFixed(1)} Hz (${A.cents >= 0 ? "+" : "−"}${Math.abs(A.cents)}¢).`;
+    } else t = "Slot A has no clear key, so scenes move freely.";
+  } else t = `Scenes move freely and each slot keeps its own key${cur0 ? ` (this one: ${PCN[cur0.pc]} ${cur0.mode})` : ""}.`;
+  $("keyText").textContent = t;
+}
+$("follow").addEventListener("change", () => {
+  readParams(); updateKeyText();
+  if (running) {
+    computeBases(); const k = keyMode();
+    if (k) { scene.deg = k.mode === "major" ? "I" : "i"; scene.root = 1; } else scene.deg = null;
+    retuneVoices(3); updateScene();
+  }
+});
+
 /* ---------- boot ---------- */
 readTokens(); readParams(); updateSelText(); computePeaks();
+updateSlotKey(slots[0]); renderSlots(); updateKeyText();
 const mq = matchMedia("(prefers-color-scheme: dark)");
 (mq.addEventListener ? mq.addEventListener("change", readTokens) : null);
 new MutationObserver(readTokens).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
