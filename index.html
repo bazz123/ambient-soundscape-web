@@ -196,9 +196,16 @@ p.readout { margin: 0; line-height: 1.45; }
           <label class="slider" for="sJitter">Pitch jitter <input id="sJitter" type="range" min="0" max="100" value="7"><output id="oJitter">±7¢</output></label>
           <label class="slider" for="sDensity">Density <input id="sDensity" type="range" min="1" max="30" value="9"><output id="oDensity">9/s</output></label>
           <div class="group-label">Character</div>
-          <label class="slider" for="sSpace">Space <input id="sSpace" type="range" min="0" max="100" value="65"><output id="oSpace">65</output></label>
           <label class="slider" for="sDrift">Drift <input id="sDrift" type="range" min="0" max="100" value="50"><output id="oDrift">50</output></label>
           <label class="slider" for="sBright">Brightness <input id="sBright" type="range" min="0" max="100" value="60"><output id="oBright">60</output></label>
+          <div class="group-label">Space</div>
+          <label class="slider" for="sSpace">Reverb level <input id="sSpace" type="range" min="0" max="100" value="65"><output id="oSpace">65</output></label>
+          <div class="slider"><label for="irType">Reverb type</label><select id="irType"><option value="hall">Hall · 6 s</option><option value="plate">Plate · 3.5 s</option><option value="spring">Spring · 2 s</option><option value="custom" disabled>Your IR file</option></select><span></span></div>
+          <div class="row"><button type="button" id="irLoad">Load your own IR…</button><span class="readout" id="irName"></span></div>
+          <input type="file" id="irFile" accept="audio/*,.wav,.aif,.aiff,.flac" hidden>
+          <p class="err" id="irErr" hidden></p>
+          <label class="check" for="binaural"><input type="checkbox" id="binaural"> Binaural mode (use headphones)</label>
+          <p class="hint">Binaural mode places grains and shimmer around your head with HRTF panning. The grain cloud slowly orbits you, and farther sounds get duller and quieter. Drones and pads stay as a stereo bed.</p>
           <div class="group-label">Harmony</div>
           <label class="check" for="follow"><input type="checkbox" id="follow" checked> Follow detected key</label>
           <label class="slider" for="sRoot">Root tone <input id="sRoot" type="range" min="0" max="100" value="35"><output id="oRoot">35</output></label>
@@ -297,11 +304,13 @@ function ensureCtx() {
   print.connect(monitor); monitor.connect(analyser); analyser.connect(ctx.destination);
   if (recDest) print.connect(recDest);
 
-  // Reverb: 30 ms pre-delay → IR with early reflections → low shelf on the return
-  const verbIn = ctx.createGain(), pre = ctx.createDelay(0.2); pre.delayTime.value = 0.03;
-  const verb = ctx.createConvolver(); verb.buffer = makeIR(ctx, 6);
+  // Reverb: pre-delay → two convolvers (A/B, crossfaded when the IR changes) → low shelf on the return
+  const irType = $("irType").value;
+  const verbIn = ctx.createGain(), pre = ctx.createDelay(0.2); pre.delayTime.value = PRE[irType];
+  const verbA = ctx.createConvolver(), verbB = ctx.createConvolver(), gA = ctx.createGain(), gB = ctx.createGain(); gB.gain.value = 0;
   const shelf = bq("lowshelf", 250, null, -6), verbOut = ctx.createGain();
-  verbIn.connect(pre); pre.connect(verb); verb.connect(shelf); shelf.connect(verbOut); verbOut.connect(master);
+  verbIn.connect(pre); pre.connect(verbA); pre.connect(verbB); verbA.connect(gA); verbB.connect(gB); gA.connect(shelf); gB.connect(shelf);
+  shelf.connect(verbOut); verbOut.connect(master);
 
   const delay = ctx.createDelay(2); delay.delayTime.value = 0.62;
   const fb = ctx.createGain(); fb.gain.value = 0.42;
@@ -323,7 +332,9 @@ function ensureCtx() {
     return { g, send, dsend, name };
   };
   G = { monitor, trim, tone, master, analyser, recDest, verbOut, kw, peakAn, wowG, driftG, flutG, sat, satAmt: -1, bump, hissG,
-        grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer"), freeze: bus("freeze"), root: bus("root"), freezeNode: null, rootTone: null };
+        grains: bus("grains"), drone: bus("drone"), shimmer: bus("shimmer"), freeze: bus("freeze"), root: bus("root"), freezeNode: null, rootTone: null,
+        pre, verb: { slots: [[verbA, gA], [verbB, gB]], cur: 0 } };
+  verbA.buffer = getIR(irType);
   G.drone.dsend.gain.value = 0; G.freeze.dsend.gain.value = 0; G.root.dsend.gain.value = 0;
   G.freezeReady = (async () => {
     if (!ctx.audioWorklet || typeof AudioWorkletNode === "undefined") throw new Error("no AudioWorklet");
@@ -447,6 +458,85 @@ function makeClipCurve(c) {
   }
   return out;
 }
+/* ---------- reverb impulse responses ---------- */
+const PRE = { hall: 0.03, plate: 0.012, spring: 0, custom: 0 }; // pre-delay per type (real IRs carry their own)
+const irCache = {}; let customIR = null, customName = "";
+function getIR(type) {
+  if (type === "custom" && customIR) return customIR;
+  if (type === "custom") type = "hall";
+  if (!irCache[type]) irCache[type] = type === "plate" ? makePlate(ctx, 3.5) : type === "spring" ? makeSpring(ctx) : makeIR(ctx, 6);
+  return irCache[type];
+}
+/* Plate: no discrete reflections, instant dense build-up, bright, T60 ≈ 3.5 s */
+function makePlate(c, secs) {
+  const sr = c.sampleRate, len = Math.floor(sr * secs), b = c.createBuffer(2, len, sr), a = 6.9 / secs;
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch); let lp = 0;
+    for (let i = 0; i < len; i++) { const t = i / sr; lp += 0.8 * ((Math.random() * 2 - 1) - lp); d[i] = lp * Math.exp(-t * a) * Math.min(1, t / 0.002); }
+  }
+  return b;
+}
+/* Spring: two springs per side, each a train of echoes every 31–41 ms. Every echo is a descending
+   chirp (3.8 kHz → 180 Hz) that gets longer with each pass, which gives the dispersive "drip". T60 ≈ 2 s. */
+function makeSpring(c) {
+  const sr = c.sampleRate, len = Math.floor(sr * 2.4), b = c.createBuffer(2, len, sr);
+  const f0 = 3800, f1 = 180, k = Math.log(f1 / f0);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch);
+    for (const per of ch ? [0.0337, 0.0412] : [0.0313, 0.0389]) {
+      for (let n = 0, t0 = 0.003 + Math.random() * 0.003; t0 < 2.3; n++, t0 += per * rand(0.97, 1.03)) {
+        const amp = Math.pow(0.9, n) * (n % 2 ? -0.6 : 0.6), T = 0.018 * (1 + n * 0.08), s0 = Math.floor(t0 * sr), N = Math.floor(T * sr);
+        for (let i = 0; i < N && s0 + i < len; i++) { const x = i / N; d[s0 + i] += amp * Math.sin(2 * Math.PI * f0 * T / k * (Math.exp(k * x) - 1)) * Math.sin(Math.PI * x); }
+      }
+    }
+    let lp = 0;
+    for (let i = 0; i < len; i++) { lp += 0.2 * ((Math.random() * 2 - 1) - lp); d[i] += lp * 0.15 * Math.exp(-i / sr * 2.8); }
+  }
+  return b;
+}
+/* Your own IR: at most 2 channels and 12 s, leading silence (below −60 dB of the peak) trimmed. */
+function trimIR(buf) {
+  const nCh = Math.min(2, buf.numberOfChannels), sr = buf.sampleRate;
+  let pk = 0; for (let c = 0; c < nCh; c++) for (const v of buf.getChannelData(c)) pk = Math.max(pk, Math.abs(v));
+  let start = buf.length;
+  for (let c = 0; c < nCh; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > pk * 0.001) { start = Math.min(start, i); break; } }
+  if (start >= buf.length) throw new Error("silent IR");
+  const len = Math.min(buf.length - start, Math.floor(sr * 12)), out = ctx.createBuffer(nCh, len, sr);
+  for (let c = 0; c < nCh; c++) out.copyToChannel(buf.getChannelData(c).subarray(start, start + len), c);
+  return out;
+}
+function setIR(buf) {
+  const v = G.verb, next = 1 - v.cur, t = ctx.currentTime, gIn = v.slots[next][1], gOut = v.slots[v.cur][1];
+  v.slots[next][0].buffer = buf;
+  gIn.gain.cancelScheduledValues(t); gIn.gain.setValueAtTime(gIn.gain.value, t); gIn.gain.linearRampToValueAtTime(1, t + 0.8);
+  gOut.gain.cancelScheduledValues(t); gOut.gain.setValueAtTime(gOut.gain.value, t); gOut.gain.linearRampToValueAtTime(0, t + 0.8);
+  v.cur = next;
+}
+const IR_DESC = { hall: "Generated hall: 6 s, early reflections", plate: "Generated plate: 3.5 s, dense and bright", spring: "Generated spring: 2 s, dispersive chirps" };
+function applyIR() {
+  const type = $("irType").value;
+  $("irName").textContent = type === "custom" ? customName : IR_DESC[type];
+  if (!G) return;
+  setIR(getIR(type));
+  G.pre.delayTime.setTargetAtTime(PRE[type], ctx.currentTime, 0.1);
+}
+$("irType").addEventListener("change", applyIR);
+$("irLoad").addEventListener("click", () => $("irFile").click());
+$("irFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  $("irErr").hidden = true;
+  try {
+    ensureCtx();
+    customIR = trimIR(await ctx.decodeAudioData(await f.arrayBuffer()));
+    customName = `${f.name} · ${customIR.duration.toFixed(1)} s · ${customIR.numberOfChannels > 1 ? "stereo" : "mono"}`;
+    const opt = $("irType").querySelector('option[value="custom"]');
+    opt.disabled = false; opt.textContent = "Your IR: " + (f.name.length > 18 ? f.name.slice(0, 17) + "…" : f.name);
+    $("irType").value = "custom"; applyIR();
+  } catch (err) {
+    $("irErr").textContent = `Couldn't use “${f.name}” as a reverb. Use a WAV or AIFF impulse response with sound in it.`;
+    $("irErr").hidden = false;
+  }
+});
 function makeIR(c, secs) {
   const sr = c.sampleRate, len = Math.floor(sr * secs), b = c.createBuffer(2, len, sr);
   for (let ch = 0; ch < 2; ch++) {
@@ -581,14 +671,16 @@ function readParams() {
   P.gsize = +$("sSize").value; P.jitter = +$("sJitter").value;
   P.wow = $("sWow").value / 100; P.sat = $("sSat").value / 100; P.hiss = $("sHiss").value / 100;
   P.follow = $("follow").checked; P.root = $("sRoot").value / 100;
+  P.binaural = $("binaural").checked && typeof PannerNode !== "undefined";
 }
 function applyParams() {
   readParams();
   if (!G) return;
   const t = ctx.currentTime, tc = 0.15;
-  G.grains.g.gain.setTargetAtTime(P.grains * 0.9, t, tc);
+  const bin = P.binaural ? 1.5 : 1; // makes up for distance roll-off in binaural mode
+  G.grains.g.gain.setTargetAtTime(P.grains * 0.9 * bin, t, tc);
   G.drone.g.gain.setTargetAtTime(P.drone * 0.55, t, tc);
-  G.shimmer.g.gain.setTargetAtTime(P.shimmer * 0.7, t, tc);
+  G.shimmer.g.gain.setTargetAtTime(P.shimmer * 0.7 * bin, t, tc);
   G.freeze.g.gain.setTargetAtTime(P.freeze * 0.3, t, tc);
   G.root.g.gain.setTargetAtTime(P.root * 0.07, t, tc); // ≈ −28 LUFS on its own at the default 35
   for (const b of [G.grains, G.drone, G.shimmer, G.freeze, G.root]) b.send.gain.setTargetAtTime(P.space * 1.1, t, tc);
@@ -612,6 +704,32 @@ const outs = { Grains: v => v, Drone: v => v, Shimmer: v => v, Density: v => v +
   Wow: v => v, Sat: v => v, Hiss: v => v, Root: v => v };
 for (const k of Object.keys(outs)) $("s" + k).addEventListener("input", e => { $("o" + k).textContent = outs[k](e.target.value); applyParams(); });
 $("vol").addEventListener("input", applyParams);
+$("binaural").addEventListener("change", applyParams);
+
+/* ---------- placement: stereo pan, or binaural (HRTF) ----------
+   Binaural: each grain sits at an azimuth around the cloud centre, which orbits the listener once
+   every 40 s (spread grows with Spray), at −15° to +35° elevation and 1–6 m away, and drifts a little
+   while it sounds. Distance cues: inverse-distance level roll-off plus a low-pass that closes with distance. */
+const ORBIT = 40;
+function spatialize(node, dest, t, dur, kind) {
+  if (!P.binaural) {
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (pan) { pan.pan.value = kind === "s" ? rand(-1, 1) : rand(-0.85, 0.85); node.connect(pan); pan.connect(dest); } else node.connect(dest);
+    return null;
+  }
+  const spread = kind === "s" ? Math.PI : Math.PI / 3 + P.spray * 2 * Math.PI / 3;
+  const az = (t / ORBIT) * 2 * Math.PI + rand(-1, 1) * spread, el = rand(-0.26, 0.6), d = rand(1, 6);
+  const az1 = az + (kind === "s" ? rand(-1, 1) * Math.PI / 2 : rand(-0.4, 0.4));
+  const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.Q.value = 0.5; lp.frequency.value = 20000 * Math.exp(-0.3 * (d - 1));
+  const p = ctx.createPanner(); p.panningModel = "HRTF"; p.distanceModel = "inverse"; p.refDistance = 1; p.rolloffFactor = 0.6;
+  const pos = a => [d * Math.sin(a) * Math.cos(el), d * Math.sin(el), -d * Math.cos(a) * Math.cos(el)];
+  const p0 = pos(az), p1 = pos(az1);
+  if (p.positionX) {
+    [p.positionX, p.positionY, p.positionZ].forEach((prm, i) => { prm.setValueAtTime(p0[i], t); prm.linearRampToValueAtTime(p1[i], t + dur); });
+  } else p.setPosition(p0[0], p0[1], p0[2]);
+  node.connect(lp); lp.connect(p); p.connect(dest);
+  return { az, az1, d };
+}
 
 /* ---------- generative engine ---------- */
 const ROOTS = [1, 0.8909, 0.7492, 0.6674, 1.1225, 1.3348, 0.8409];
@@ -712,12 +830,11 @@ function playGrain(t) {
   const src = ctx.createBufferSource(); src.buffer = e.fwd; src.playbackRate.value = ratio;
   const g = ctx.createGain(), amp = clamp(0.5 / Math.sqrt(P.density * dur * 3), 0.08, 0.45);
   g.gain.value = 0; g.gain.setValueCurveAtTime(HANN.map(v => v * amp), t, dur); // Hann window
-  const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
   src.connect(g);
-  if (pan) { pan.pan.value = rand(-0.85, 0.85); g.connect(pan); pan.connect(G.grains.g); } else g.connect(G.grains.g);
+  const sp = spatialize(g, G.grains.g, t, dur, "g");
   src.start(t, off, dur * ratio + 0.01); src.stop(t + dur + 0.05);
   const delayMs = Math.max(0, (t - ctx.currentTime) * 1000);
-  setTimeout(() => particles.push({ kind: "g", x: (off + dur * ratio / 2) / span, ratio, r: dur, born: performance.now(), life: 900 + dur * 2200 }), delayMs);
+  setTimeout(() => particles.push({ kind: "g", x: (off + dur * ratio / 2) / span, ratio, r: dur, born: performance.now(), life: 900 + dur * 2200, ...(sp || {}) }), delayMs);
 }
 function startDrone(fadeIn = 4) {
   const t = ctx.currentTime;
@@ -755,11 +872,10 @@ function shimmerEvent() {
     src.loop = true; src.loopStart = off; src.loopEnd = off + len;
     const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 700;
     const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.35, t + play * 0.45); g.gain.linearRampToValueAtTime(0, t + play);
-    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
     src.connect(hp); hp.connect(g);
-    if (pan) { pan.pan.value = rand(-1, 1); g.connect(pan); pan.connect(G.shimmer.g); } else g.connect(G.shimmer.g);
+    const sp = spatialize(g, G.shimmer.g, t, play, "s");
     src.start(t, off); src.stop(t + play + 0.1);
-    particles.push({ kind: "s", x: (off + len / 2) / ess.dur, ratio, r: len, born: performance.now(), life: play * 1000 });
+    particles.push({ kind: "s", x: (off + len / 2) / ess.dur, ratio, r: len, born: performance.now(), life: play * 1000, ...(sp || {}) });
   }
   shimmerTimer = setTimeout(shimmerEvent, rand(2500, 7000) / (0.4 + P.shimmer));
 }
@@ -1027,6 +1143,21 @@ function drawViz() {
     g.beginPath(); g.arc(x, y, (p.kind === "s" ? 10 + p.r * 18 : 2.5 + p.r * 16) * dpr * (0.6 + age * 0.6), 0, Math.PI * 2); g.fill();
   }
   g.globalAlpha = 1;
+  // binaural: top-down view of the listener (front is up), grains and shimmer placed by azimuth and distance
+  if (running && P.binaural) {
+    const R = 40 * dpr, cx = padL + iw - R - 10 * dpr, cy = top + R + 24 * dpr;
+    g.globalAlpha = 0.88; g.fillStyle = tok.stage; g.beginPath(); g.arc(cx, cy, R + 8 * dpr, 0, Math.PI * 2); g.fill(); g.globalAlpha = 1;
+    g.strokeStyle = tok.line; g.lineWidth = dpr; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = tok.ink; g.beginPath(); g.arc(cx, cy, 4 * dpr, 0, Math.PI * 2); g.fill(); g.fillRect(cx - 0.75 * dpr, cy - 10 * dpr, 1.5 * dpr, 6 * dpr);
+    for (const p of particles) {
+      if (p.az == null) continue;
+      const age = (now - p.born) / p.life, a = p.az + (p.az1 - p.az) * Math.min(1, age), r = p.d / 6 * R;
+      g.globalAlpha = (age < 0.15 ? age / 0.15 : 1 - (age - 0.15) / 0.85) * 0.8;
+      g.fillStyle = p.kind === "s" ? tok.warm : tok.accent;
+      g.beginPath(); g.arc(cx + Math.sin(a) * r, cy - Math.cos(a) * r, (p.kind === "s" ? 4 : 2.5) * dpr, 0, Math.PI * 2); g.fill();
+    }
+    g.globalAlpha = 1; g.fillStyle = tok.muted; g.fillText("top view · front ↑", cx - R, cy + R + 18 * dpr);
+  }
 }
 
 /* ---------- takes ---------- */
@@ -1204,7 +1335,7 @@ $("follow").addEventListener("change", () => {
 
 /* ---------- boot ---------- */
 readTokens(); readParams(); updateSelText(); computePeaks();
-updateSlotKey(slots[0]); renderSlots(); updateKeyText();
+updateSlotKey(slots[0]); renderSlots(); updateKeyText(); applyIR();
 const mq = matchMedia("(prefers-color-scheme: dark)");
 (mq.addEventListener ? mq.addEventListener("change", readTokens) : null);
 new MutationObserver(readTokens).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });

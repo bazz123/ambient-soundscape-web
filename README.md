@@ -21,6 +21,8 @@ A browser version of the [Ambient Soundscape Generator](https://github.com/dmpav
 
    **Essence slots.** Up to four slots (A–D), each with its own file and region. Each scene change crossfades to the next slot in order: grains switch over gradually, and drones fade between slots. With *Follow detected key* on, slots B–D are transposed (at most ±6 semitones, plus tuning) to slot A's key.
 
+   **Space.** Choose a generated *hall* (6 s, early reflections, 30 ms pre-delay), *plate* (3.5 s, dense and bright) or *spring* (2 s, trains of descending chirps that lengthen with each pass), or load your own impulse response (WAV/AIFF; up to 2 channels and 12 s, leading silence trimmed). Switching crossfades between two convolvers, so there is no click. *Binaural mode* places grains and shimmer around the listener with HRTF panning: the grain cloud orbits once every 40 s, and distance (1–6 m) is heard as level roll-off plus a closing low-pass. A small top view on the stage shows where sounds are. Drones and pads stay a stereo bed.
+
 4. **Save the results.** Name a take, then click *Record take* once to start and again to finish. Takes are saved as `.webm` (`.mp4` in Safari).
 
 The stage at the top is a grain map: each dot is a grain or a shimmer, placed by where in the essence it came from (left to right) and by its pitch (up and down). Warm bands show the drone voices, the vertical line is the scan head with its spray range, and the thin line marked "freeze" is the freeze pad.
