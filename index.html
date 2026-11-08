@@ -47,6 +47,10 @@ h1 span { color: var(--accent); font-weight: 400; }
 .lede { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
 .vol { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .vol input { width: 140px; }
+/* Top row: the stage with the Soundscape widget beside it; stacked on narrow screens. */
+.top { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: stretch; }
+.top .stage { aspect-ratio: auto; max-height: none; height: 100%; min-height: 380px; }
+@media (max-width: 900px) { .top { grid-template-columns: minmax(0, 1fr); } .top .stage { aspect-ratio: 16 / 9; height: auto; min-height: 260px; } }
 /* Widget board: one card per control group, left to right in reading order; cards in a row share a height. */
 .widgets { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-items: stretch; }
 .w { align-content: start; }
@@ -137,10 +141,31 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
     <label class="vol" for="vol">VOLUME <input id="vol" type="range" min="0" max="100" value="80"></label>
   </header>
 
-  <div class="stage" id="stage">
-    <canvas id="viz"></canvas>
-    <div class="stage-top"><span class="state" id="state"><span class="dot"></span><span id="stateText">Silent</span></span><span id="sceneText"></span></div>
-    <div class="idle-msg" id="idle"><div><strong>Press Start to grow a soundscape</strong><span id="idleSub">from the 3.0 s essence of the example chime.</span></div></div>
+  <div class="top">
+    <div class="stage" id="stage">
+      <canvas id="viz"></canvas>
+      <div class="stage-top"><span class="state" id="state"><span class="dot"></span><span id="stateText">Silent</span></span><span id="sceneText"></span></div>
+      <div class="idle-msg" id="idle"><div><strong>Press Start to grow a soundscape</strong><span id="idleSub">from the 3.0 s essence of the example chime.</span></div></div>
+    </div>
+  <section class="panel w" aria-labelledby="h-gen">
+    <h2 id="h-gen">Soundscape</h2>
+    <button id="start" class="primary big" type="button">START</button>
+    <div class="meter">
+      <div class="mhead"><span class="group-label">Loudness · LUFS</span>
+        <label class="readout" for="target">Target <select id="target"><option value="-23">−23 broadcast</option><option value="-16" selected>−16 streaming</option><option value="-14">−14 loud streaming</option></select></label></div>
+      <div class="mbar" aria-hidden="true"><div class="mfill" id="mFill"></div><div class="mtarget" id="mTarget"></div></div>
+      <div class="mscale readout" aria-hidden="true"><span>−40</span><span>−30</span><span>−20</span><span>−10</span><span>0</span></div>
+      <dl class="mnums">
+        <div><dt>MOMENT.</dt><dd id="lM">–</dd></div>
+        <div><dt>SHORT</dt><dd id="lS">–</dd></div>
+        <div><dt>INTEGR.</dt><dd id="lI">–</dd></div>
+        <div><dt>PEAK dB</dt><dd id="lP">–</dd></div>
+      </dl>
+      <p class="hint" id="lDiff">Start the soundscape to measure loudness.</p>
+      <label class="slider" for="sTrim">Output trim <input id="sTrim" type="range" min="-12" max="12" step="0.5" value="0"><output id="oTrim">+0.0 dB</output></label>
+      <div class="row"><button id="match" type="button" disabled>Match target</button><span class="readout">Limiter ceiling −1 dBFS</span></div>
+    </div>
+  </section>
   </div>
 
   <div class="widgets">
@@ -163,26 +188,6 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
         <button id="playSrc" type="button">▶ Play source</button>
         <button id="capture" class="rec" type="button"><span class="rec-dot"></span><span id="capLabel">Capture essence</span></button>
         <span class="readout" id="selText">Essence 0.00–3.00 s · 3.00 s</span>
-      </div>
-    </section>
-
-    <section class="panel w" aria-labelledby="h-gen">
-      <h2 id="h-gen">Soundscape</h2>
-      <button id="start" class="primary big" type="button">START</button>
-      <div class="meter">
-        <div class="mhead"><span class="group-label">Loudness · LUFS</span>
-          <label class="readout" for="target">Target <select id="target"><option value="-23">−23 broadcast</option><option value="-16" selected>−16 streaming</option><option value="-14">−14 loud streaming</option></select></label></div>
-        <div class="mbar" aria-hidden="true"><div class="mfill" id="mFill"></div><div class="mtarget" id="mTarget"></div></div>
-        <div class="mscale readout" aria-hidden="true"><span>−40</span><span>−30</span><span>−20</span><span>−10</span><span>0</span></div>
-        <dl class="mnums">
-          <div><dt>MOMENT.</dt><dd id="lM">–</dd></div>
-          <div><dt>SHORT</dt><dd id="lS">–</dd></div>
-          <div><dt>INTEGR.</dt><dd id="lI">–</dd></div>
-          <div><dt>PEAK dB</dt><dd id="lP">–</dd></div>
-        </dl>
-        <p class="hint" id="lDiff">Start the soundscape to measure loudness.</p>
-        <label class="slider" for="sTrim">Output trim <input id="sTrim" type="range" min="-12" max="12" step="0.5" value="0"><output id="oTrim">+0.0 dB</output></label>
-        <div class="row"><button id="match" type="button" disabled>Match target</button><span class="readout">Limiter ceiling −1 dBFS</span></div>
       </div>
     </section>
 
