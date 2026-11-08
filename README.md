@@ -23,7 +23,15 @@ A browser version of the [Ambient Soundscape Generator](https://github.com/dmpav
 
    **Space.** Choose a generated *hall* (6 s, early reflections, 30 ms pre-delay), *plate* (3.5 s, dense and bright) or *spring* (2 s, trains of descending chirps that lengthen with each pass), or load your own impulse response (WAV/AIFF; up to 2 channels and 12 s, leading silence trimmed). Switching crossfades between two convolvers, so there is no click. *Binaural mode* places grains and shimmer around the listener with HRTF panning: the grain cloud orbits once every 40 s, and distance (1–6 m) is heard as level roll-off plus a closing low-pass. A small top view on the stage shows where sounds are. Drones and pads stay a stereo bed.
 
-4. **Save the results.** Name a take, then click *Record take* once to start and again to finish. Takes are saved as `.webm` (`.mp4` in Safari).
+   **Form.** An *Arc* shapes the soundscape over the chosen *Length* (0:30–30:00): *Loop* stays steady, *Sunrise* starts sparse and dark and opens up, *Bloom* rises to a peak mid-way and falls back to silence, and *Sleep* thins out and fades to silence. Levels and brightness run as sample-accurate parameter ramps, and grain density follows the same keyframes. The *Seed* drives five separate random streams (grains, shimmer, scenes, placement, drones), and every event is scheduled on audio time, so the same seed and settings play the same soundscape. The seed is kept in the page link (`#seed-12345`).
+
+4. **Export.** *Render and save* runs the same engine in an `OfflineAudioContext`, faster than real time (about 10–15× on a laptop), at your device's sample rate as 24-bit WAV.
+   - **Loudness:** the mix is measured to ITU-R BS.1770-4 (K-weighting, gated integrated loudness) and set to the meter's target (−23, −16 or −14 LUFS). True peak, found by 4× windowed-sinc interpolation, is kept at or below −1 dBTP; if that needs more level than the limiter allows, the mix is rendered a second time into the limiter.
+   - **Seamless loop** (Loop arc): renders a 12 s pre-roll, the loop and up to 8 s more, then crossfades that extra material into the head (equal power), so the last sample runs straight into the first.
+   - **Stems:** grains, drone (with the root tone), shimmer and freeze are rendered with the same seed, at the mix's gain but before the master limiter, so they sum back to the mix apart from limiting.
+   - Multi-file exports come as a ZIP with a notes file (seed, settings, measured loudness).
+
+5. **Live takes.** Name a take, then click *Record take* once to start and again to finish. Takes are saved as `.webm` (`.mp4` in Safari).
 
 The stage at the top is a grain map: each dot is a grain or a shimmer, placed by where in the essence it came from (left to right) and by its pitch (up and down). Warm bands show the drone voices, the vertical line is the scan head with its spray range, and the thin line marked "freeze" is the freeze pad.
 
